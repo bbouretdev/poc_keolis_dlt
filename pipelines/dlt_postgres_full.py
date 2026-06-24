@@ -7,25 +7,24 @@ DEST_CONN = "postgresql://dest_user:dest_pwd@localhost:5434/dest_db"
 
 def load_full_pipeline():
 
-    # 1. Déclarer source SQL
     source = sql_database(
         credentials=SOURCE_CONN,
-        chunk_size=50000,  # ton choix archi validé
+        chunk_size=50000,
+        backend="connectorx"
     )
 
-    # 2. Sélectionner tables (full load)
     pipeline = dlt.pipeline(
         pipeline_name="postgres_full_copy",
         destination=dlt.destinations.postgres(credentials=DEST_CONN),
         dataset_name="public",
     )
 
-    # 3. Charger une table
     load_info = pipeline.run(
         source.with_resources("orders"),
-        write_disposition="replace",  # FULL LOAD
+        write_disposition="replace",
     )
 
+    print(pipeline.last_trace)
     print(load_info)
 
 
