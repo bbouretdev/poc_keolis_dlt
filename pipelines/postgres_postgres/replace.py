@@ -1,11 +1,19 @@
 import dlt
 from dlt.sources.sql_database import sql_table
 
+import os
+import json
+
+schema = os.environ["DLT_SOURCE_SCHEMA"]
+table = os.environ["DLT_SOURCE_TABLE"]
+backend = os.environ["DLT_BACKEND"]
+chunk_size = int(os.environ["DLT_CHUNK_SIZE"])
+
 source = sql_table(
-    table="orders",
-    schema="dlt",
-    backend="connectorx",
-    chunk_size=50000,
+    table=table,
+    schema=schema,
+    backend=backend,
+    chunk_size=chunk_size,
 )
 
 pipeline = dlt.pipeline(
