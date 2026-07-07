@@ -19,20 +19,26 @@ source = sql_table(
     chunk_size=chunk_size,
 )
 
-destination = filesystem(
-    bucket_url="az://keolis",
-    credentials={
-        "azure_storage_account_name": "devstoreaccount1",
-        "azure_storage_account_key": "Eby8vdM02xNOcqFeqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
-        "azure_account_host": "azurite:10000/devstoreaccount1",
-    },
-)
+# destination = filesystem(
+#     bucket_url="az://keolis",
+#     credentials={
+#         "azure_storage_account_name": "devstoreaccount1",
+#         "azure_storage_account_key": "Eby8vdM02xNOcqFeqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
+#         "azure_account_host": "azurite:10000/devstoreaccount1",
+#     },
+# )
 
 pipeline = dlt.pipeline(
-    pipeline_name=pipeline_id,
-    destination=destination,
-    dataset_name=target_path,
+    pipeline_name="pif",
+    destination="filesystem",
+    dataset_name="paf",
 )
+
+# pipeline = dlt.pipeline(
+#     pipeline_name=pipeline_id,
+#     destination=destination,
+#     dataset_name=target_path,
+# )
 
 print(destination.configuration)
 load_info = pipeline.run(
