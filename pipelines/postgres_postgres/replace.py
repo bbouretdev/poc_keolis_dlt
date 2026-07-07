@@ -9,7 +9,7 @@ source = sql_table(
 )
 
 pipeline = dlt.pipeline(
-    pipeline_name="postgres_postgres_init",
+    pipeline_name="postgres_postgres_replace",
     destination="postgres_dest",
     dataset_name="dlt"
 )
