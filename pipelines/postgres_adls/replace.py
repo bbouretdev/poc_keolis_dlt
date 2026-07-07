@@ -23,8 +23,8 @@ destination = filesystem(
     bucket_url="az://keolis",
     credentials={
         "azure_storage_account_name": "devstoreaccount1",
-        "azure_storage_sas_token": "?sv=2021-10-04&spr=https%2Chttp&st=2026-07-07T14%3A08%3A13Z&se=2029-03-08T15%3A08%3A00Z&sr=c&sp=racwdxltf&sig=dq1NaNjH8WpB8IRPP65iFK2XR3%2FOCy7po9UfO57k8e4%3D",
-        "account_url": "http://azurite:10000/devstoreaccount1",
+        "azure_storage_account_key": "Eby8vdM02xNOcqFeqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
+        "azure_account_host": "devstoreaccount1.azurite:10000",
     },
 )
 
@@ -34,6 +34,7 @@ pipeline = dlt.pipeline(
     dataset_name=target_path,
 )
 
+print(destination.configuration)
 load_info = pipeline.run(
     source,
     table_name=target_filename,
