@@ -6,7 +6,6 @@ source = sql_table(
     schema="dlt",
     backend="connectorx",
     chunk_size=50000,
-    # credentials=dlt.secrets["sources.postgres_source.credentials"]
 )
 
 pipeline = dlt.pipeline(
