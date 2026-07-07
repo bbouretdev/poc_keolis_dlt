@@ -40,7 +40,7 @@ pipeline = dlt.pipeline(
 #     dataset_name=target_path,
 # )
 
-print(destination.configuration)
+# print(destination.configuration)
 load_info = pipeline.run(
     source,
     table_name=target_filename,
