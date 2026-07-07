@@ -24,7 +24,7 @@ destination = filesystem(
     credentials={
         "azure_storage_account_name": "devstoreaccount1",
         "azure_storage_account_key": "Eby8vdM02xNOcqFeqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
-        "azure_account_host": "devstoreaccount1.azurite:10000",
+        "azure_account_host": "azurite:10000/devstoreaccount1",
     },
 )
 
