@@ -24,7 +24,7 @@ destination = filesystem(
     credentials={
         "azure_storage_account_name": "devstoreaccount1",
         "azure_storage_sas_token": "?sv=2021-10-04&spr=https%2Chttp&st=2026-07-07T14%3A08%3A13Z&se=2029-03-08T15%3A08%3A00Z&sr=c&sp=racwdxltf&sig=dq1NaNjH8WpB8IRPP65iFK2XR3%2FOCy7po9UfO57k8e4%3D",
-        "azure_storage_endpoint": "http://azurite:10000",
+        "account_url": "http://azurite:10000/devstoreaccount1",
     },
 )
 
