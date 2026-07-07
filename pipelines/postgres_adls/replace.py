@@ -19,15 +19,15 @@ source = sql_table(
     chunk_size=chunk_size,
 )
 
-# Destination : Azure Blob Storage (via Azurite en local/POC)
-blob_destination = filesystem(
-    bucket_url="az://moncontainer",
-    destination_name="azurite_blob",
-)
+# # Destination : Azure Blob Storage (via Azurite en local/POC)
+# blob_destination = filesystem(
+#     bucket_url="az://moncontainer",
+#     destination_name="azurite_blob",
+# )
 
 pipeline = dlt.pipeline(
     pipeline_name=pipeline_id,
-    destination=blob_destination,
+    destination="filesystem",
     dataset_name=target_path,
 )
 
