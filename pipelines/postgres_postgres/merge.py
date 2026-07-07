@@ -4,15 +4,19 @@ from dlt.sources.sql_database import sql_table
 import os
 import json
 
+schema = os.environ["DLT_SOURCE_SCHEMA"]
+table = os.environ["DLT_SOURCE_TABLE"]
+backend = os.environ["DLT_BACKEND"]
+chink_size = os.environ["DLT_CHUNK_SIZE"]
 primary_key = None
 if "DLT_PRIMARY_KEY" in os.environ:
     primary_key = json.loads(os.environ["DLT_PRIMARY_KEY"])
 
 source = sql_table(
-    table="orders",
-    schema="dlt",
-    backend="connectorx",
-    chunk_size=50000,
+    table=table,
+    schema=schema,
+    backend=backend,
+    chunk_size=chunk_size,
 )
 if primary_key:
     source = source.apply_hints(primary_key=primary_key)
