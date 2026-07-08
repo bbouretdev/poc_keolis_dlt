@@ -4,6 +4,8 @@ from dlt.sources.sql_database import sql_table
 import os
 import json
 
+from datetime import datetime, timezone
+
 pipeline_id = os.environ["DLT_PIPELINE_ID"]
 source_schema = os.environ["DLT_SOURCE_SCHEMA"]
 source_table = os.environ["DLT_SOURCE_TABLE"]
