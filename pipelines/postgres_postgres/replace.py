@@ -6,6 +6,9 @@ import json
 
 from datetime import datetime, timezone
 
+start_time = datetime.now(timezone.utc)
+print(f"[START] Pipeline started at {start_time.isoformat()}")
+
 pipeline_id = os.environ["DLT_PIPELINE_ID"]
 source_schema = os.environ["DLT_SOURCE_SCHEMA"]
 source_table = os.environ["DLT_SOURCE_TABLE"]
