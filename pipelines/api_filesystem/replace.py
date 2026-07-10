@@ -53,7 +53,7 @@ pipeline = dlt.pipeline(
 
 load_info = pipeline.run(
     source,
-    table_name=target_table,
+    table_name=target_path,
     write_disposition="replace",
     loader_file_format=file_format,
 )
