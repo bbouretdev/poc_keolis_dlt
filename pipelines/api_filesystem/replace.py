@@ -62,7 +62,7 @@ duration = (end_time - start_time).total_seconds()
 normalize_info = pipeline.last_trace.last_normalize_info
 
 if normalize_info is not None:
-    rows_processed = normalize_info.row_counts.get(target_table, 0)
+    rows_processed = normalize_info.row_counts.get(target_path, 0)
 else:
     print("Aucune extraction effectuée — chargement d'un package en attente uniquement")
     rows_processed = 0
@@ -82,7 +82,7 @@ print("-" * 60)
 print("DESTINATION")
 print(f"  Bucket URL       : {target_bucket_url}")
 print(f"  File format      : {file_format}")
-print(f"  Dataset (table)  : {target_table}")
+print(f"  Dataset (table)  : {target_path}")
 print("-" * 60)
 print("ROWS")
 print(f"  Write disposition : REPLACE")
