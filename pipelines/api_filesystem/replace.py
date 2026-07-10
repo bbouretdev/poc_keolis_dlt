@@ -45,15 +45,13 @@ source = rest_api_source(
 
 pipeline = dlt.pipeline(
     pipeline_name=pipeline_id,
-    destination=dlt.destinations.filesystem(
-        bucket_url=target_bucket_url,
-    ),
-    dataset_name=target_table,
+    destination="filesystem",
+    dataset_name=target_path,
 )
 
 load_info = pipeline.run(
     source,
-    table_name=target_path,
+    table_name=target_filename,
     write_disposition="replace",
     loader_file_format=file_format,
 )
