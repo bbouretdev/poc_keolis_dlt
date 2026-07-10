@@ -33,7 +33,7 @@ source = rest_api_source(
         },
         "resources": [
             {
-                "name": target_table,
+                "name": target_path,
                 "endpoint": {
                     "path": source_endpoint,
                     "paginator": "json_link",  # PokeAPI expose "next" dans la réponse JSON
