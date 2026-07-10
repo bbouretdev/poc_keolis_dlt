@@ -11,16 +11,12 @@ print(f"[START] Pipeline started at {start_time.isoformat()}")
 
 pipeline_id = os.environ["DLT_PIPELINE_ID"]
 
-# --- Source REST API ---
-api_base_url = os.environ["DLT_SOURCE_API_BASE_URL"]      # ex: https://pokeapi.co/api/v2/
-source_endpoint = os.environ["DLT_SOURCE_ENDPOINT"]        # ex: "pokemon"
-
-# --- Destination filesystem ---
-target_bucket_url = os.environ["DLT_TARGET_BUCKET_URL"]    # ex: file:///data/dlt_output
-target_table = os.environ["DLT_TARGET_TABLE"]              # nom logique du "dataset" écrit
-file_format = os.environ.get("DLT_FILE_FORMAT", "jsonl")   # jsonl, parquet, csv...
-
-chunk_size = int(os.environ["DLT_CHUNK_SIZE"])             # taille de page côté pagination REST
+api_base_url = os.environ["DLT_SOURCE_API_BASE_URL"]
+source_endpoint = os.environ["DLT_SOURCE_ENDPOINT"]
+target_path = os.environ["DLT_TARGET_PATH"]
+target_filename = os.environ["DLT_TARGET_FILENAME"]
+file_format = os.environ.get("DLT_FILE_FORMAT", "jsonl")
+chunk_size = int(os.environ["DLT_CHUNK_SIZE"])
 
 
 source = rest_api_source(
@@ -58,7 +54,7 @@ pipeline = dlt.pipeline(
 load_info = pipeline.run(
     source,
     table_name=target_table,
-    write_disposition="replace",  # "append" possible aussi selon le use-case
+    write_disposition="replace",
     loader_file_format=file_format,
 )
 
