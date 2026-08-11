@@ -15,11 +15,11 @@ backend = os.environ.get("DLT_BACKEND", "connectorx")
 chunk_size = int(os.environ.get("DLT_CHUNK_SIZE", "50000"))
 
 write_disp_map = {
-    "ECRASER": "replace",
-    "AJOUTER": "append",
-    "METTRE_A_JOUR": "merge"
+    "REPLACE": "replace",
+    "APPEND": "append",
+    "UPDATE": "merge"
 }
-raw_strategy = os.environ.get("DLT_WRITE_STRATEGY", "ECRASER")
+raw_strategy = os.environ.get("DLT_WRITE_STRATEGY", "REPLACE")
 write_disposition = write_disp_map.get(raw_strategy, "replace")
 
 primary_key = None
@@ -47,5 +47,32 @@ load_info = pipeline.run(
 )
 
 end_time = datetime.now(timezone.utc)
-print(f"PIPELINE COMPLETED: {write_disposition} on {target_table} in {(end_time - start_time).total_seconds():.2f}s")
+print("=" * 60)
+print("PIPELINE EXECUTION SUMMARY")
+print("=" * 60)
+print(f"Started at         : {start_time.isoformat()}")
+print(f"Finished at        : {end_time.isoformat()}")
+print(f"Duration           : {duration:.2f}s")
+print(f"Backend            : {backend}")
+print("-" * 60)
+print("SOURCE")
+print(f"  Host             : {source_host}")
+print(f"  Database         : {source_db}")
+print(f"  Port             : {source_port}")
+print(f"  Schema           : {source_schema}")
+print(f"  Table            : {source_table}")
+print("-" * 60)
+print("DESTINATION")
+print(f"  Host             : {dest_host}")
+print(f"  Database         : {dest_db}")
+print(f"  Port             : {dest_port}")
+print(f"  Dataset (schema) : {target_schema}")
+print(f"  Table            : {target_table}")
+print("-" * 60)
+print("ROWS")
+print(f"  Write disposition : REPLACE")
+print(f"  Rows processed      : {rows_processed}")
+print("=" * 60)
+
+print(pipeline.last_trace)
 print(load_info)
