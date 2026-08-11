@@ -47,6 +47,8 @@ load_info = pipeline.run(
 )
 
 end_time = datetime.now(timezone.utc)
+duration = (end_time - start_time).total_seconds()
+
 print("=" * 60)
 print("PIPELINE EXECUTION SUMMARY")
 print("=" * 60)
