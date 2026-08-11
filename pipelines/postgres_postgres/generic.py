@@ -6,7 +6,6 @@ from dlt.sources.sql_database import sql_table
 
 start_time = datetime.now(timezone.utc)
 
-# --- Variables d'environnement ---
 pipeline_id = os.environ["DLT_PIPELINE_ID"]
 source_schema = os.environ["DLT_SOURCE_SCHEMA"]
 source_table = os.environ["DLT_SOURCE_TABLE"]
@@ -15,13 +14,9 @@ target_table = os.environ["DLT_TARGET_TABLE"]
 backend = os.environ.get("DLT_BACKEND", "connectorx")
 chunk_size = int(os.environ.get("DLT_CHUNK_SIZE", "50000"))
 
-# Mapping des stratégies d'écriture
 write_disp_map = {
-    "ECRASER": "replace",
     "REPLACE": "replace",
-    "AJOUTER": "append",
     "APPEND": "append",
-    "METTRE_A_JOUR": "merge",
     "UPDATE": "merge"
 }
 raw_strategy = os.environ.get("DLT_WRITE_STRATEGY", "REPLACE")
@@ -31,7 +26,6 @@ primary_key = None
 if os.environ.get("DLT_PRIMARY_KEY"):
     primary_key = json.loads(os.environ["DLT_PRIMARY_KEY"])
 
-# --- Construction & Exécution DLT ---
 source = sql_table(
     table=source_table,
     schema=source_schema,
@@ -52,7 +46,6 @@ load_info = pipeline.run(
     primary_key=primary_key
 )
 
-# --- Informations réseau / infra pour les logs ---
 source_host = os.environ.get("SOURCES__SQL_DATABASE__CREDENTIALS__HOST", "N/A")
 source_db = os.environ.get("SOURCES__SQL_DATABASE__CREDENTIALS__DATABASE", "N/A")
 source_port = os.environ.get("SOURCES__SQL_DATABASE__CREDENTIALS__PORT", "5432")
@@ -61,11 +54,9 @@ dest_host = os.environ.get("DESTINATION__POSTGRES_DEST__CREDENTIALS__HOST", "N/A
 dest_db = os.environ.get("DESTINATION__POSTGRES_DEST__CREDENTIALS__DATABASE", "N/A")
 dest_port = os.environ.get("DESTINATION__POSTGRES_DEST__CREDENTIALS__PORT", "5432")
 
-# --- Métriques d'exécution ---
 end_time = datetime.now(timezone.utc)
 duration = (end_time - start_time).total_seconds()
 
-# Récupération sécurisée du nombre de lignes traitées depuis la trace DLT
 rows_processed = 0
 try:
     if pipeline.last_trace and pipeline.last_trace.last_normalize_info:
@@ -74,7 +65,6 @@ try:
 except Exception:
     pass
 
-# --- Résumé dans la console ---
 print("=" * 60)
 print("PIPELINE EXECUTION SUMMARY")
 print("=" * 60)
