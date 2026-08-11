@@ -46,6 +46,14 @@ load_info = pipeline.run(
     primary_key=primary_key
 )
 
+source_host = os.environ.get("SOURCES__SQL_DATABASE__CREDENTIALS__HOST", "N/A")
+source_db = os.environ.get("SOURCES__SQL_DATABASE__CREDENTIALS__DATABASE", "N/A")
+source_port = os.environ.get("SOURCES__SQL_DATABASE__CREDENTIALS__PORT", "5432")
+
+dest_host = os.environ.get("DESTINATION__POSTGRES_DEST__CREDENTIALS__HOST", "N/A")
+dest_db = os.environ.get("DESTINATION__POSTGRES_DEST__CREDENTIALS__DATABASE", "N/A")
+dest_port = os.environ.get("DESTINATION__POSTGRES_DEST__CREDENTIALS__PORT", "5432")
+
 end_time = datetime.now(timezone.utc)
 duration = (end_time - start_time).total_seconds()
 
