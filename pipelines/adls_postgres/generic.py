@@ -6,25 +6,48 @@ from dlt.sources.filesystem import filesystem, read_parquet
 USE_AZURITE = os.getenv("USE_AZURITE", "true").lower() == "true"
 
 CONTAINER_NAME = os.getenv("DLT_AZURE_CONTAINER", "source-data")
-# Support de plusieurs patterns séparés par des virgules
-FILE_GLOBS_RAW = os.getenv("DLT_FILE_GLOB", "*.parquet")
-PIPELINE_ID = os.getenv("DLT_PIPELINE_ID", "adls_multi_to_postgres")
+FILE_MAPPING_RAW = os.getenv("DLT_FILE_GLOB", "*.parquet")
+PIPELINE_ID = os.getenv("DLT_PIPELINE_ID", "adls_mapping_to_postgres")
 TARGET_SCHEMA = os.getenv("DLT_TARGET_SCHEMA", "dlt")
 WRITE_STRATEGY = os.getenv("DLT_WRITE_STRATEGY", "replace").lower()
 
-FILE_GLOBS = [g.strip() for g in FILE_GLOBS_RAW.split(",") if g.strip()]
+
+def parse_file_mapping(raw_input: str) -> dict:
+    """
+    Parse la chaîne transmise et retourne un dict {glob_pattern: target_table_name_or_None}.
+    Exemples acceptés :
+      - "items.parquet:items, orders.parquet:client_orders" -> {'items.parquet': 'items', 'orders.parquet': 'client_orders'}
+      - "*.parquet" -> {'*.parquet': None}
+      - "orders.parquet" -> {'orders.parquet': None}
+    """
+    mapping = {}
+    tokens = [t.strip() for t in raw_input.split(",") if t.strip()]
+    
+    for token in tokens:
+        if ":" in token:
+            file_pattern, table_alias = token.split(":", 1)
+            mapping[file_pattern.strip()] = table_alias.strip().lower()
+        else:
+            mapping[token.strip()] = None
+            
+    return mapping
 
 
-def get_table_name_from_blob(blob_name: str) -> str:
-    """Dérive un nom de table Postgres propre à partir du nom du fichier/chemin."""
-    filename = os.path.basename(blob_name)
+def derive_table_name(path: str, alias: str = None) -> str:
+    """Si un alias est fourni, l'utilise, sinon déduit le nom depuis le fichier."""
+    if alias:
+        return alias
+    filename = os.path.basename(path)
     base_name = os.path.splitext(filename)[0]
     return base_name.replace("-", "_").replace(" ", "_").lower()
 
 
+MAPPING = parse_file_mapping(FILE_MAPPING_RAW)
+
+
 if USE_AZURITE:
     # ------------------------------------------------------------------
-    # 1. MODE DEV LOCAL (AZURITE - MULTI FICHIERS)
+    # 1. MODE DEV LOCAL (AZURITE)
     # ------------------------------------------------------------------
     from azure.storage.blob import BlobServiceClient
     import pyarrow.parquet as pq
@@ -50,57 +73,70 @@ if USE_AZURITE:
         try:
             all_blobs = list(container_client.list_blobs())
         except Exception as e:
-            print(f"⚠️ Erreur d'accès au conteneur '{CONTAINER_NAME}': {e}")
+            print(f"⚠️ Erreur d'accès au conteneur Azurite '{CONTAINER_NAME}': {e}")
             return []
 
-        # Pour chaque blob correspondant à un des patterns
-        for blob in all_blobs:
-            if blob.name.endswith(".parquet"):
-                blob_name = blob.name
-                table_name = get_table_name_from_blob(blob_name)
+        # Pour chaque entrée du mapping
+        for file_pattern, custom_table in MAPPING.items():
+            for blob in all_blobs:
+                # Vérifie la correspondance (fichier exact ou extension)
+                if file_pattern == "*.parquet" or blob.name == file_pattern or blob.name.endswith(file_pattern):
+                    blob_name = blob.name
+                    target_table_name = derive_table_name(blob_name, custom_table)
 
-                # Fonction génératrice isolée par fichier
-                def make_generator(b_name=blob_name):
-                    def item_generator():
-                        blob_client = container_client.get_blob_client(b_name)
-                        stream = blob_client.download_blob()
-                        table = pq.read_table(io.BytesIO(stream.readall()))
-                        yield table.to_pylist()
-                    return item_generator
+                    def make_generator(b_name=blob_name):
+                        def item_generator():
+                            blob_client = container_client.get_blob_client(b_name)
+                            stream = blob_client.download_blob()
+                            table = pq.read_table(io.BytesIO(stream.readall()))
+                            yield table.to_pylist()
+                        return item_generator
 
-                # Déclaration d'une ressource DLT nommée d'après le fichier
-                res = dlt.resource(
-                    make_generator(),
-                    name=table_name,
-                    selected=True,
-                )
-                resources.append(res)
+                    res = dlt.resource(
+                        make_generator(),
+                        name=target_table_name,
+                        selected=True,
+                    )
+                    resources.append(res)
 
         if not resources:
-            print(f"⚠️ Aucun fichier parquet trouvé dans Azurite '{CONTAINER_NAME}'")
+            print(f"⚠️ Aucun fichier correspondant trouvé dans Azurite '{CONTAINER_NAME}' pour {MAPPING}")
 
         return resources
 
 else:
     # ------------------------------------------------------------------
-    # 2. MODE PROD (ADLS GEN2 100% DLT-NATIVE MULTI-PATTERNS)
+    # 2. MODE PROD NATIVE (ADLS GEN2)
     # ------------------------------------------------------------------
     @dlt.source
     def source_parquet_data():
         resources = []
-        for glob_pattern in FILE_GLOBS:
-            table_name = get_table_name_from_blob(glob_pattern)
+        
+        for file_pattern, custom_table in MAPPING.items():
             files = filesystem(
                 bucket_url=f"az://{CONTAINER_NAME}",
-                file_glob=glob_pattern,
+                file_glob=file_pattern,
             )
-            resources.append((files | read_parquet()).with_name(table_name))
+            
+            for file_item in files:
+                file_path = file_item["file_name"]
+                target_table_name = derive_table_name(file_path, custom_table)
+                
+                single_file = filesystem(
+                    bucket_url=f"az://{CONTAINER_NAME}",
+                    file_glob=file_path,
+                )
+                
+                res = (single_file | read_parquet()).with_name(target_table_name)
+                resources.append(res)
+
         return resources
 
 
 def run_pipeline():
     mode_label = f"Azurite Local ({CONTAINER_NAME})" if USE_AZURITE else f"ADLS Gen2 Prod ({CONTAINER_NAME})"
-    print(f"🚀 Démarrage du pipeline Multi-Ingestion [{mode_label}] -> Schema: {TARGET_SCHEMA}")
+    print(f"🚀 Démarrage du pipeline DLT Ingestion [{mode_label}] -> Schema: {TARGET_SCHEMA}")
+    print(f"📋 Mapping appliqué : {MAPPING}")
 
     pipeline = dlt.pipeline(
         pipeline_name=PIPELINE_ID,
@@ -113,7 +149,7 @@ def run_pipeline():
         write_disposition=WRITE_STRATEGY,
     )
 
-    print("\n✅ Multi-Ingestion exécutée avec succès !")
+    print("\n✅ Ingestion avec mapping terminée avec succès !")
     print(load_info)
 
 
