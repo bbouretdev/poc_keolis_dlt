@@ -5,7 +5,7 @@ import dlt
 from dlt.sources.filesystem import filesystem, read_parquet
 
 # 1. Variables d'environnement pour le mode local / prod
-USE_AZURITE = os.getenv("USE_AZURITE", "false").lower() == "true"
+USE_AZURITE = os.getenv("USE_AZURITE").lower() == "true"
 
 # 2. Paramètres DLT transmis par le Pod
 CONTAINER_NAME = os.getenv("DLT_AZURE_CONTAINER")
