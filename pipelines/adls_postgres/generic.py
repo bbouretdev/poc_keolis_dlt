@@ -8,12 +8,12 @@ from dlt.sources.filesystem import filesystem, read_parquet
 USE_AZURITE = os.getenv("USE_AZURITE", "false").lower() == "true"
 
 # 2. Paramètres DLT transmis par le Pod
-CONTAINER_NAME = os.getenv("DLT_AZURE_CONTAINER", "source-data")
-FILE_GLOB = os.getenv("DLT_FILE_GLOB", "*.parquet")
-PIPELINE_ID = os.getenv("DLT_PIPELINE_ID", "adls_to_postgres_pipeline")
-TARGET_SCHEMA = os.getenv("DLT_TARGET_SCHEMA", "dlt")
-TARGET_TABLE = os.getenv("DLT_TARGET_TABLE", "raw_data")
-WRITE_STRATEGY = os.getenv("DLT_WRITE_STRATEGY", "replace").lower()
+CONTAINER_NAME = os.getenv("DLT_AZURE_CONTAINER")
+FILE_GLOB = os.getenv("DLT_FILE_GLOB")
+PIPELINE_ID = os.getenv("DLT_PIPELINE_ID")
+TARGET_SCHEMA = os.getenv("DLT_TARGET_SCHEMA")
+TARGET_TABLE = os.getenv("DLT_TARGET_TABLE")
+WRITE_STRATEGY = os.getenv("DLT_WRITE_STRATEGY").lower()
 
 
 if USE_AZURITE:
