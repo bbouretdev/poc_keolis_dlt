@@ -4,16 +4,16 @@ import dlt
 from dlt.sources.sql_database import sql_table
 
 # Paramètres du pipeline via variables d'environnement transmis par le Pod
-pipeline_id = os.environ.get("DLT_PIPELINE_ID")
-source_schema = os.environ.get("DLT_SOURCE_SCHEMA")
-source_table = os.environ.get("DLT_SOURCE_TABLE")
-target_path = os.environ.get("DLT_TARGET_PATH")  # Nom du conteneur/dataset
-target_filename = os.environ.get("DLT_TARGET_FILENAME")
-backend = os.environ.get("DLT_BACKEND")
-chunk_size = int(os.environ.get("DLT_CHUNK_SIZE"))
+pipeline_id = os.environ.get("DLT_PIPELINE_ID", "postgres_to_adls_pipeline")
+source_schema = os.environ.get("DLT_SOURCE_SCHEMA", "public")
+source_table = os.environ.get("DLT_SOURCE_TABLE", "items")
+target_path = os.environ.get("DLT_TARGET_PATH", "target-data")  # Nom du conteneur/dataset
+target_filename = os.environ.get("DLT_TARGET_FILENAME", "export_items")
+backend = os.environ.get("DLT_BACKEND", "connectorx")
+chunk_size = int(os.environ.get("DLT_CHUNK_SIZE", "100000"))
 
 # Détection de l'environnement (par défaut Azurite)
-IS_LOCAL_AZURITE = os.getenv("USE_AZURITE").lower() == "true"
+IS_LOCAL_AZURITE = os.getenv("USE_AZURITE", "true").lower() == "true"
 
 
 def run_export_pipeline():
@@ -21,7 +21,6 @@ def run_export_pipeline():
     print(f"🚀 Démarrage du pipeline DLT [{mode_label}]...")
 
     # 1. Définition de la source SQL (commune aux deux modes)
-    # DLT lira la connexion Postgres depuis SOURCES__SQL_DATABASE__CREDENTIALS
     source = sql_table(
         table=source_table,
         schema=source_schema,
@@ -40,7 +39,8 @@ def run_export_pipeline():
         print(f"📦 Extraction de la table SQL '{source_schema}.{source_table}'...")
         
         batches = []
-        for chunk in source():
+        # CORRECTION : On itère directement sur `source` (sans parenthèses)
+        for chunk in source:
             if chunk:
                 batches.append(pa.RecordBatch.from_pylist(chunk))
 
