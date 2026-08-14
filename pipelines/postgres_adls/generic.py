@@ -1,6 +1,8 @@
 import io
 import os
 import dlt
+import pyarrow as pa
+import pyarrow.parquet as pq
 from dlt.sources.sql_database import sql_table
 
 # Paramètres du pipeline via variables d'environnement transmis par le Pod
@@ -33,22 +35,36 @@ def run_export_pipeline():
         # WORKAROUND DEV LOCAL (AZURITE)
         # ------------------------------------------------------------------
         from azure.storage.blob import BlobServiceClient
-        import pyarrow as pa
-        import pyarrow.parquet as pq
 
         print(f"📦 Extraction de la table SQL '{source_schema}.{source_table}'...")
         
-        batches = []
-        # CORRECTION : On itère directement sur `source` (sans parenthèses)
+        tables = []
         for chunk in source:
-            if chunk:
-                batches.append(pa.RecordBatch.from_pylist(chunk))
+            if chunk is not None:
+                # 1. Si DLT renvoie déjà un objet Arrow (ConnectorX / PyArrow)
+                if isinstance(chunk, pa.Table):
+                    tables.append(chunk)
+                elif isinstance(chunk, pa.RecordBatch):
+                    tables.append(pa.Table.from_batches([chunk]))
+                # 2. Si DLT renvoie une liste de dictionnaires Python
+                elif isinstance(chunk, list):
+                    if len(chunk) > 0:
+                        tables.append(pa.Table.from_pylist(chunk))
+                # 3. Fallback générique
+                else:
+                    try:
+                        tables.append(pa.Table.from_pandas(chunk))
+                    except Exception as e:
+                        print(f"⚠️ Impossible de convertir le chunk ({type(chunk)}): {e}")
 
-        if not batches:
+        if not tables:
             print("⚠️ Aucune donnée trouvée dans la table source.")
             return
 
-        arrow_table = pa.Table.from_batches(batches)
+        # Consolidation en une seule table PyArrow
+        arrow_table = pa.concat_tables(tables)
+        
+        # Conversion Parquet en mémoire
         parquet_buffer = io.BytesIO()
         pq.write_table(arrow_table, parquet_buffer)
         parquet_buffer.seek(0)
