@@ -7,18 +7,20 @@ USE_AZURITE = os.getenv("USE_AZURITE", "true").lower() == "true"
 
 CONTAINER_NAME = os.getenv("DLT_AZURE_CONTAINER", "source-data")
 FILE_MAPPING_RAW = os.getenv("DLT_FILE_GLOB", "*.parquet")
-PIPELINE_ID = os.getenv("DLT_PIPELINE_ID", "adls_mapping_to_postgres")
+PIPELINE_ID = os.getenv("DLT_PIPELINE_ID", "adls_to_postgres_pipeline")
 TARGET_SCHEMA = os.getenv("DLT_TARGET_SCHEMA", "dlt")
 WRITE_STRATEGY = os.getenv("DLT_WRITE_STRATEGY", "replace").lower()
+
+# Taille des lots pour le streaming (par défaut 10 000 lignes)
+CHUNK_SIZE = int(os.getenv("DLT_CHUNK_SIZE", "10000"))
 
 
 def parse_file_mapping(raw_input: str) -> dict:
     """
     Parse la chaîne transmise et retourne un dict {glob_pattern: target_table_name_or_None}.
-    Exemples acceptés :
-      - "items.parquet:items, orders.parquet:client_orders" -> {'items.parquet': 'items', 'orders.parquet': 'client_orders'}
-      - "*.parquet" -> {'*.parquet': None}
-      - "orders.parquet" -> {'orders.parquet': None}
+    Exexmples acceptés :
+      - "items.parquet:items, orders.parquet:client_orders"
+      - "*.parquet"
     """
     mapping = {}
     tokens = [t.strip() for t in raw_input.split(",") if t.strip()]
@@ -47,7 +49,7 @@ MAPPING = parse_file_mapping(FILE_MAPPING_RAW)
 
 if USE_AZURITE:
     # ------------------------------------------------------------------
-    # 1. MODE DEV LOCAL (AZURITE)
+    # 1. MODE DEV LOCAL (AZURITE) AVEC STREAMING / CHUNKING PAR BATCHS
     # ------------------------------------------------------------------
     from azure.storage.blob import BlobServiceClient
     import pyarrow.parquet as pq
@@ -76,20 +78,24 @@ if USE_AZURITE:
             print(f"⚠️ Erreur d'accès au conteneur Azurite '{CONTAINER_NAME}': {e}")
             return []
 
-        # Pour chaque entrée du mapping
         for file_pattern, custom_table in MAPPING.items():
             for blob in all_blobs:
-                # Vérifie la correspondance (fichier exact ou extension)
                 if file_pattern == "*.parquet" or blob.name == file_pattern or blob.name.endswith(file_pattern):
                     blob_name = blob.name
                     target_table_name = derive_table_name(blob_name, custom_table)
 
+                    # Générateur découpant la table Arrow par lots (chunk_size)
                     def make_generator(b_name=blob_name):
                         def item_generator():
                             blob_client = container_client.get_blob_client(b_name)
                             stream = blob_client.download_blob()
                             table = pq.read_table(io.BytesIO(stream.readall()))
-                            yield table.to_pylist()
+                            
+                            # REPRODUIT LE COMPORTEMENT DLT NATIVE (CHUNK_SIZE) :
+                            # Au lieu de yield toute la table en 1 bloc, on yield par paquets de N lignes
+                            for batch in table.to_batches(max_chunksize=CHUNK_SIZE):
+                                yield batch.to_pylist()
+
                         return item_generator
 
                     res = dlt.resource(
@@ -106,7 +112,7 @@ if USE_AZURITE:
 
 else:
     # ------------------------------------------------------------------
-    # 2. MODE PROD NATIVE (ADLS GEN2)
+    # 2. MODE PROD NATIVE (ADLS GEN2) - STREAMING STREAMÉ PAR DEFAULT
     # ------------------------------------------------------------------
     @dlt.source
     def source_parquet_data():
@@ -136,7 +142,7 @@ else:
 def run_pipeline():
     mode_label = f"Azurite Local ({CONTAINER_NAME})" if USE_AZURITE else f"ADLS Gen2 Prod ({CONTAINER_NAME})"
     print(f"🚀 Démarrage du pipeline DLT Ingestion [{mode_label}] -> Schema: {TARGET_SCHEMA}")
-    print(f"📋 Mapping appliqué : {MAPPING}")
+    print(f"📋 Mapping : {MAPPING} | Lot (chunk_size): {CHUNK_SIZE} lignes")
 
     pipeline = dlt.pipeline(
         pipeline_name=PIPELINE_ID,
@@ -149,7 +155,7 @@ def run_pipeline():
         write_disposition=WRITE_STRATEGY,
     )
 
-    print("\n✅ Ingestion avec mapping terminée avec succès !")
+    print("\n✅ Ingestion terminée avec succès !")
     print(load_info)
 
 
