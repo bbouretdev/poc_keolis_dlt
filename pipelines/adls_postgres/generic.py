@@ -153,7 +153,7 @@ def run_pipeline():
     load_info = pipeline.run(
         source_parquet_data(),
         write_disposition=WRITE_STRATEGY,
-        loader_file_format="parquet"
+        loader_file_format="csv"
     )
 
     print("\n✅ Ingestion terminée avec succès !")
