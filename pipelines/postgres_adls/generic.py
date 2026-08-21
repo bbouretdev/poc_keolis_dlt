@@ -7,18 +7,17 @@ import pyarrow.parquet as pq
 from dlt.sources.sql_database import sql_table, sql_database
 
 # -----------------------------------------------------------------------------
-# 1. RÉCUPÉRATION DES VARIABLES D'ENVIRONNEMENT (TRANSMISES PAR LE POD AIRFLOW)
+# 1. RÉCUPÉRATION DES VARIABLES D'ENVIRONNEMENT (TRANSMISES PAR AIRFLOW)
 # -----------------------------------------------------------------------------
 pipeline_id = os.environ.get("DLT_PIPELINE_ID", "postgres_to_adls_pipeline")
 source_schema = os.environ.get("DLT_SOURCE_SCHEMA", "public")
 source_table = os.environ.get("DLT_SOURCE_TABLE")
 
 # Nom de fichier/table cible personnalisé (Option 2)
-# Fallback sur source_table si non spécifié
 target_name = os.environ.get("DLT_TARGET_NAME", source_table)
 
 target_path = os.environ.get("DLT_TARGET_PATH", "target-data")  # Nom du conteneur Azure
-backend = os.environ.get("DLT_BACKEND", "connectorx")
+backend = os.environ.get("DLT_BACKEND", "connectorx").lower()
 chunk_size = int(os.environ.get("DLT_CHUNK_SIZE", "100000"))
 
 IS_LOCAL_AZURITE = os.getenv("USE_AZURITE", "true").lower() == "true"
@@ -30,13 +29,34 @@ def run_export_pipeline():
         sys.exit(1)
 
     mode_label = "Azurite Dev (SDK Direct)" if IS_LOCAL_AZURITE else "ADLS Gen2 Prod (DLT Native)"
-    print(f"🚀 Démarrage de l'export DLT [{mode_label}]...")
+    print(f"🚀 Démarrage de l'export DLT [{mode_label}] - Engine: {backend}...")
     print(f"📦 Source : {source_schema}.{source_table} -> Cible : {target_path}/{target_name}.parquet")
 
+    # -------------------------------------------------------------------------
+    # CONFIGURATION DES OPTIONS DE RÉFLEXION DU MOTEUR (CONNECTORX vs PYARROW)
+    # -------------------------------------------------------------------------
+    table_kwargs = {
+        "table": source_table,
+        "schema": source_schema,
+        "backend": backend,
+        "chunk_size": chunk_size,
+    }
+    database_kwargs = {
+        "schema": source_schema,
+        "table_names": [source_table],
+        "backend": backend,
+        "chunk_size": chunk_size,
+    }
+
+    # Si on demande PyArrow, on injecte la précision stricte PostgreSQL
+    if backend == "pyarrow":
+        table_kwargs["reflection_level"] = "full_with_precision"
+        database_kwargs["reflection_level"] = "full_with_precision"
+
+    # -------------------------------------------------------------------------
+    # 2. MODE DEV LOCAL (AZURITE)
+    # -------------------------------------------------------------------------
     if IS_LOCAL_AZURITE:
-        # ------------------------------------------------------------------
-        # WORKAROUND DEV LOCAL (AZURITE - POD DÉDIÉ PAR TABLE)
-        # ------------------------------------------------------------------
         from azure.storage.blob import BlobServiceClient
 
         conn_str = os.getenv(
@@ -60,12 +80,8 @@ def run_export_pipeline():
 
         print(f"🔄 Export de la table '{source_schema}.{source_table}'...")
 
-        src_table = sql_table(
-            table=source_table,
-            schema=source_schema,
-            backend=backend,
-            chunk_size=chunk_size,
-        )
+        # Utilisation de nos kwargs dynamiques (avec/sans full_with_precision)
+        src_table = sql_table(**table_kwargs)
 
         arrow_tables = []
         for chunk in src_table:
@@ -86,33 +102,24 @@ def run_export_pipeline():
             print(f"⚠️ Aucune donnée dans la table '{source_table}'. Export sauté.")
             return
 
-        # Consolidation en mémoire des chunks Arrow
         consolidated_table = pa.concat_tables(arrow_tables)
         parquet_buffer = io.BytesIO()
         pq.write_table(consolidated_table, parquet_buffer)
         parquet_buffer.seek(0)
 
-        # UTILISATION DU NOM CIBLE : On utilise target_name.parquet au lieu de source_table.parquet
         blob_name = f"{target_name}.parquet"
         blob_client = container_client.get_blob_client(blob_name)
         blob_client.upload_blob(parquet_buffer.getvalue(), overwrite=True)
         print(f"✅ Table '{source_table}' ({consolidated_table.num_rows} lignes) -> Blob '{blob_name}' dans '{target_path}'")
 
+    # -------------------------------------------------------------------------
+    # 3. MODE PROD NATIVE (ADLS GEN2)
+    # -------------------------------------------------------------------------
     else:
-        # ------------------------------------------------------------------
-        # PIPELINE DLT NATIVE (PROD / ADLS GEN2)
-        # ------------------------------------------------------------------
-        postgres_source = sql_database(
-            schema=source_schema,
-            table_names=[source_table],
-            backend=backend,
-            chunk_size=chunk_size,
-        )
+        postgres_source = sql_database(**database_kwargs)
 
-        # Récupération de la ressource DLT
         resource = postgres_source.resources[source_table]
 
-        # RENOMMAGE : On renomme la ressource si un target_name spécifique est demandé
         if target_name and target_name != source_table:
             print(f"✏️ Renommage de la ressource DLT : '{source_table}' -> '{target_name}'")
             resource = resource.with_name(target_name)
