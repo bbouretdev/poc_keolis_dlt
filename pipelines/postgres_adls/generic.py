@@ -4,10 +4,10 @@ import sys
 import dlt
 import pyarrow as pa
 import pyarrow.parquet as pq
-from dlt.sources.sql_database import sql_table, sql_database
+from dlt.sources.sql_database import sql_table
 
 # -----------------------------------------------------------------------------
-# 1. RÉCUPÉRATION DES VARIABLES D'ENVIRONNEMENT (TRANSMISES PAR AIRFLOW)
+# 1. RÉCUPÉRATION DES VARIABLES D'ENVIRONNEMENT (INJECTÉES PAR AIRFLOW)
 # -----------------------------------------------------------------------------
 pipeline_id = os.environ.get("DLT_PIPELINE_ID", "postgres_to_adls_pipeline")
 source_schema = os.environ.get("DLT_SOURCE_SCHEMA", "public")
@@ -33,28 +33,21 @@ def run_export_pipeline():
     print(f"📦 Source : {source_schema}.{source_table} -> Cible : {target_path}/{target_name}.parquet")
 
     # -------------------------------------------------------------------------
-    # CONFIGURATION DES OPTIONS DE RÉFLEXION DU MOTEUR (CONNECTORX vs PYARROW)
+    # 2. PRÉPARATION HARMONISÉE DES PARAMÈTRES DLT (sql_table)
     # -------------------------------------------------------------------------
-    table_kwargs = {
+    dlt_kwargs = {
         "table": source_table,
         "schema": source_schema,
         "backend": backend,
         "chunk_size": chunk_size,
     }
-    database_kwargs = {
-        "schema": source_schema,
-        "table_names": [source_table],
-        "backend": backend,
-        "chunk_size": chunk_size,
-    }
 
-    # Si on demande PyArrow, on injecte la précision stricte PostgreSQL
+    # Précision stricte des types si PyArrow est choisi
     if backend == "pyarrow":
-        table_kwargs["reflection_level"] = "full_with_precision"
-        database_kwargs["reflection_level"] = "full_with_precision"
+        dlt_kwargs["reflection_level"] = "full_with_precision"
 
     # -------------------------------------------------------------------------
-    # 2. MODE DEV LOCAL (AZURITE)
+    # 3. MODE DEV LOCAL (AZURITE) - EXTRACTION sql_table + SDK BLOB
     # -------------------------------------------------------------------------
     if IS_LOCAL_AZURITE:
         from azure.storage.blob import BlobServiceClient
@@ -78,10 +71,10 @@ def run_export_pipeline():
         except Exception:
             pass
 
-        print(f"🔄 Export de la table '{source_schema}.{source_table}'...")
+        print(f"🔄 Exportation de la table '{source_schema}.{source_table}'...")
 
-        # Utilisation de nos kwargs dynamiques (avec/sans full_with_precision)
-        src_table = sql_table(**table_kwargs)
+        # Utilisation de sql_table
+        src_table = sql_table(**dlt_kwargs)
 
         arrow_tables = []
         for chunk in src_table:
@@ -113,13 +106,13 @@ def run_export_pipeline():
         print(f"✅ Table '{source_table}' ({consolidated_table.num_rows} lignes) -> Blob '{blob_name}' dans '{target_path}'")
 
     # -------------------------------------------------------------------------
-    # 3. MODE PROD NATIVE (ADLS GEN2)
+    # 4. MODE PROD NATIVE (ADLS GEN2) - EXTRACTION sql_table + DLT PIPELINE
     # -------------------------------------------------------------------------
     else:
-        postgres_source = sql_database(**database_kwargs)
+        # Utilisation de sql_table (retourne directement la ressource DLT)
+        resource = sql_table(**dlt_kwargs)
 
-        resource = postgres_source.resources[source_table]
-
+        # Renommage de la ressource si un target_name spécifique est fourni
         if target_name and target_name != source_table:
             print(f"✏️ Renommage de la ressource DLT : '{source_table}' -> '{target_name}'")
             resource = resource.with_name(target_name)
