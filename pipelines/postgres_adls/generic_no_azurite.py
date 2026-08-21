@@ -30,7 +30,6 @@ def run_export_pipeline():
         dataset_name=TARGET_CONTAINER,
     )
 
-    # DLT fait l'extraction, la conversion Parquet et l'upload vers Azure en 1 ligne
     load_info = pipeline.run(
         source,
         table_name=TARGET_FILENAME,
