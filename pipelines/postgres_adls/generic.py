@@ -38,27 +38,24 @@ def run_export_pipeline():
 
     resource = sql_table(**dlt_kwargs)
 
-    # Assigne le chemin complet avec les slashes directement au nom de la ressource
+    # Attribution du chemin relatif complet
     if target_name != source_table:
         print(f"✏️ Nom de la ressource DLT : '{source_table}' -> '{target_name}'")
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 3. EXÉCUTION DU PIPELINE DLT (LAYOUT PERSONNALISÉ)
+    # 3. EXÉCUTION DU PIPELINE DLT
     # -------------------------------------------------------------------------
-    # dataset_name="" évite la création d'un dossier racine auto-généré par DLT
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
         destination="filesystem",
-        dataset_name="",
+        dataset_name="",  # Évite d'ajouter un dossier préfixe
     )
 
-    # Le paramètre layout force DLT à conserver la hiérarchie brute de table_name
     load_info = pipeline.run(
         resource,
         write_disposition=write_strategy,
         loader_file_format="parquet",
-        layout="{table_name}/{load_id}.{file_id}.{ext}",
     )
 
     print("\n✅ Export DLT terminé avec succès !")
