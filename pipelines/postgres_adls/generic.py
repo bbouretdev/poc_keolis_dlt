@@ -1,26 +1,20 @@
-import io
 import os
 import sys
 import dlt
-import pyarrow as pa
-import pyarrow.parquet as pq
 from dlt.sources.sql_database import sql_table
 
 # -----------------------------------------------------------------------------
-# 1. RÉCUPÉRATION DES VARIABLES D'ENVIRONNEMENT (INJECTÉES PAR AIRFLOW)
+# 1. PARAMÈTRES DU JOB (INJECTÉS PAR LE POD KUBERNETES)
 # -----------------------------------------------------------------------------
 pipeline_id = os.environ.get("DLT_PIPELINE_ID", "postgres_to_adls_pipeline")
 source_schema = os.environ.get("DLT_SOURCE_SCHEMA", "public")
 source_table = os.environ.get("DLT_SOURCE_TABLE")
 
-# Nom de fichier/table cible personnalisé (Option 2)
 target_name = os.environ.get("DLT_TARGET_NAME", source_table)
-
-target_path = os.environ.get("DLT_TARGET_PATH", "target-data")  # Nom du conteneur Azure
+target_path = os.environ.get("DLT_TARGET_PATH", "target-data")
 backend = os.environ.get("DLT_BACKEND", "connectorx").lower()
 chunk_size = int(os.environ.get("DLT_CHUNK_SIZE", "100000"))
-
-IS_LOCAL_AZURITE = os.getenv("USE_AZURITE", "true").lower() == "true"
+write_strategy = os.getenv("DLT_WRITE_STRATEGY", "replace").lower()
 
 
 def run_export_pipeline():
@@ -28,12 +22,11 @@ def run_export_pipeline():
         print("❌ La variable DLT_SOURCE_TABLE est obligatoire pour ce Pod.")
         sys.exit(1)
 
-    mode_label = "Azurite Dev (SDK Direct)" if IS_LOCAL_AZURITE else "ADLS Gen2 Prod (DLT Native)"
-    print(f"🚀 Démarrage de l'export DLT [{mode_label}] - Engine: {backend}...")
-    print(f"📦 Source : {source_schema}.{source_table} -> Cible : {target_path}/{target_name}.parquet")
+    print(f"🚀 Démarrage de l'export DLT Native - Engine: {backend} - Strategy: {write_strategy}")
+    print(f"📦 Source : {source_schema}.{source_table} -> Cible : {target_path}/{target_name}")
 
     # -------------------------------------------------------------------------
-    # 2. PRÉPARATION HARMONISÉE DES PARAMÈTRES DLT (sql_table)
+    # 2. PRÉPARATION DE LA RESSOURCE SOURCE POSTGRESQL
     # -------------------------------------------------------------------------
     dlt_kwargs = {
         "table": source_table,
@@ -42,95 +35,34 @@ def run_export_pipeline():
         "chunk_size": chunk_size,
     }
 
-    # Précision stricte des types si PyArrow est choisi
     if backend == "pyarrow":
         dlt_kwargs["reflection_level"] = "full_with_precision"
 
-    # -------------------------------------------------------------------------
-    # 3. MODE DEV LOCAL (AZURITE) - EXTRACTION sql_table + SDK BLOB
-    # -------------------------------------------------------------------------
-    if IS_LOCAL_AZURITE:
-        from azure.storage.blob import BlobServiceClient
+    resource = sql_table(**dlt_kwargs)
 
-        conn_str = os.getenv(
-            "AZURE_STORAGE_CONNECTION_STRING",
-            (
-                "DefaultEndpointsProtocol=http;"
-                "AccountName=devstoreaccount1;"
-                "AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;"
-                "BlobEndpoint=http://azurite:10000/devstoreaccount1;"
-            ),
-        )
-
-        blob_service_client = BlobServiceClient.from_connection_string(
-            conn_str, api_version="2020-08-04"
-        )
-        container_client = blob_service_client.get_container_client(target_path)
-        try:
-            container_client.create_container()
-        except Exception:
-            pass
-
-        print(f"🔄 Exportation de la table '{source_schema}.{source_table}'...")
-
-        # Utilisation de sql_table
-        src_table = sql_table(**dlt_kwargs)
-
-        arrow_tables = []
-        for chunk in src_table:
-            if chunk is not None:
-                if isinstance(chunk, pa.Table):
-                    arrow_tables.append(chunk)
-                elif isinstance(chunk, pa.RecordBatch):
-                    arrow_tables.append(pa.Table.from_batches([chunk]))
-                elif isinstance(chunk, list) and len(chunk) > 0:
-                    arrow_tables.append(pa.Table.from_pylist(chunk))
-                else:
-                    try:
-                        arrow_tables.append(pa.Table.from_pandas(chunk))
-                    except Exception:
-                        pass
-
-        if not arrow_tables:
-            print(f"⚠️ Aucune donnée dans la table '{source_table}'. Export sauté.")
-            return
-
-        consolidated_table = pa.concat_tables(arrow_tables)
-        parquet_buffer = io.BytesIO()
-        pq.write_table(consolidated_table, parquet_buffer)
-        parquet_buffer.seek(0)
-
-        blob_name = f"{target_name}.parquet"
-        blob_client = container_client.get_blob_client(blob_name)
-        blob_client.upload_blob(parquet_buffer.getvalue(), overwrite=True)
-        print(f"✅ Table '{source_table}' ({consolidated_table.num_rows} lignes) -> Blob '{blob_name}' dans '{target_path}'")
+    # Renommage de la ressource/fichier cible si spécifié
+    if target_name and target_name != source_table:
+        print(f"✏️ Renommage de la ressource DLT : '{source_table}' -> '{target_name}'")
+        resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 4. MODE PROD NATIVE (ADLS GEN2) - EXTRACTION sql_table + DLT PIPELINE
+    # 3. EXÉCUTION DU PIPELINE DLT (DESTINATION FILESYSTEM)
     # -------------------------------------------------------------------------
-    else:
-        # Utilisation de sql_table (retourne directement la ressource DLT)
-        resource = sql_table(**dlt_kwargs)
+    pipeline = dlt.pipeline(
+        pipeline_name=pipeline_id,
+        destination="filesystem",
+        dataset_name=target_path,
+    )
 
-        # Renommage de la ressource si un target_name spécifique est fourni
-        if target_name and target_name != source_table:
-            print(f"✏️ Renommage de la ressource DLT : '{source_table}' -> '{target_name}'")
-            resource = resource.with_name(target_name)
+    load_info = pipeline.run(
+        resource,
+        write_disposition=write_strategy,
+        loader_file_format="parquet",
+    )
 
-        pipeline = dlt.pipeline(
-            pipeline_name=pipeline_id,
-            destination="filesystem",
-            dataset_name=target_path,
-        )
-
-        load_info = pipeline.run(
-            resource,
-            write_disposition="replace",
-            loader_file_format="parquet",
-        )
-
-        print(pipeline.last_trace)
-        print(load_info)
+    print("\n✅ Export DLT terminé avec succès !")
+    print(pipeline.last_trace)
+    print(load_info)
 
 
 if __name__ == "__main__":
