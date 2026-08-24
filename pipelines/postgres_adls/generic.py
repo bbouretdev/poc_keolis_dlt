@@ -21,8 +21,8 @@ except KeyError as e:
 
 
 def run_export_pipeline():
-    print(f"🚀 Démarrage export DLT Native - Engine: {backend} - Strategy: {write_strategy}")
-    print(f"📦 Source : {source_schema}.{source_table} -> Cible : {dataset_name}/{target_name}")
+    print(f"🚀 Démarrage export DLT Native (Delta Lake) - Engine: {backend} - Strategy: {write_strategy}")
+    print(f"📦 Source : {source_schema}.{source_table} -> Cible Delta : {dataset_name}/{target_name}")
 
     # -------------------------------------------------------------------------
     # 2. PRÉPARATION DE LA RESSOURCE SOURCE POSTGRESQL
@@ -44,21 +44,21 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 3. EXÉCUTION DU PIPELINE DLT
+    # 3. EXÉCUTION DU PIPELINE DLT (FORMAT DELTA LAKE)
     # -------------------------------------------------------------------------
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
         destination="filesystem",
-        dataset_name=dataset_name,  # Fixe le domaine racine (ex: "billetique")
+        dataset_name=dataset_name,
     )
 
     load_info = pipeline.run(
         resource,
         write_disposition=write_strategy,
-        loader_file_format="parquet",
+        loader_file_format="delta",
     )
 
-    print("\n✅ Export DLT terminé avec succès !")
+    print("\n✅ Export Delta Lake terminé avec succès !")
     print(pipeline.last_trace)
     print(load_info)
 
