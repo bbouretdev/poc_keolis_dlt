@@ -4,26 +4,25 @@ import dlt
 from dlt.sources.sql_database import sql_table
 
 # -----------------------------------------------------------------------------
-# 1. PARAMÈTRES DU JOB (INJECTÉS PAR LE POD KUBERNETES)
+# 1. RÉCUPÉRATION STRICTE DES VARIABLES D'ENVIRONNEMENT (SANS DEFAULT)
 # -----------------------------------------------------------------------------
-pipeline_id = os.environ.get("DLT_PIPELINE_ID", "postgres_to_adls_pipeline")
-source_schema = os.environ.get("DLT_SOURCE_SCHEMA", "public")
-source_table = os.environ.get("DLT_SOURCE_TABLE")
-
-target_name = os.environ.get("DLT_TARGET_NAME", source_table)
-target_path = os.environ.get("DLT_TARGET_PATH", "target-data")
-backend = os.environ.get("DLT_BACKEND", "connectorx").lower()
-chunk_size = int(os.environ.get("DLT_CHUNK_SIZE", "100000"))
-write_strategy = os.getenv("DLT_WRITE_STRATEGY", "replace").lower()
+try:
+    pipeline_id = os.environ["DLT_PIPELINE_ID"]
+    source_schema = os.environ["DLT_SOURCE_SCHEMA"]
+    source_table = os.environ["DLT_SOURCE_TABLE"]
+    target_name = os.environ["DLT_TARGET_NAME"]  # ex: "ventes/2026/commandes_export"
+    target_path = os.environ["DLT_TARGET_PATH"]
+    backend = os.environ["DLT_BACKEND"].lower()
+    chunk_size = int(os.environ["DLT_CHUNK_SIZE"])
+    write_strategy = os.environ["DLT_WRITE_STRATEGY"].lower()
+except KeyError as e:
+    print(f"❌ ERREUR CRITIQUE : La variable d'environnement {e} est absente.")
+    sys.exit(1)
 
 
 def run_export_pipeline():
-    if not source_table:
-        print("❌ La variable DLT_SOURCE_TABLE est obligatoire pour ce Pod.")
-        sys.exit(1)
-
     print(f"🚀 Démarrage de l'export DLT Native - Engine: {backend} - Strategy: {write_strategy}")
-    print(f"📦 Source : {source_schema}.{source_table} -> Cible : {target_path}/{target_name}")
+    print(f"📦 Source : {source_schema}.{source_table} -> Cible : {target_path}/{target_name}.parquet")
 
     # -------------------------------------------------------------------------
     # 2. PRÉPARATION DE LA RESSOURCE SOURCE POSTGRESQL
@@ -40,8 +39,8 @@ def run_export_pipeline():
 
     resource = sql_table(**dlt_kwargs)
 
-    # Renommage de la ressource/fichier cible si spécifié
-    if target_name and target_name != source_table:
+    # DLT gère les slashes dans with_name() en créant l'arborescence de sous-dossiers dans ADLS
+    if target_name != source_table:
         print(f"✏️ Renommage de la ressource DLT : '{source_table}' -> '{target_name}'")
         resource = resource.with_name(target_name)
 
