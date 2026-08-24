@@ -10,7 +10,7 @@ try:
     pipeline_id = os.environ["DLT_PIPELINE_ID"]
     source_schema = os.environ["DLT_SOURCE_SCHEMA"]
     source_table = os.environ["DLT_SOURCE_TABLE"]
-    target_name = os.environ["DLT_TARGET_NAME"]  # ex: "referentiel/articles_export"
+    target_name = os.environ["DLT_TARGET_NAME"]  # ex: "billetique/ventes/commandes_export"
     backend = os.environ["DLT_BACKEND"].lower()
     chunk_size = int(os.environ["DLT_CHUNK_SIZE"])
     write_strategy = os.environ["DLT_WRITE_STRATEGY"].lower()
@@ -24,18 +24,7 @@ def run_export_pipeline():
     print(f"📦 Source : {source_schema}.{source_table} -> Cible : {target_name}")
 
     # -------------------------------------------------------------------------
-    # 2. DÉPARATION DU CHEMIN (DATASET) ET DU NOM DE TABLE
-    # -------------------------------------------------------------------------
-    # Si target_name contient des slashes (ex: "referentiel/articles_export"),
-    # dataset_folder devient "referentiel" et final_table_name devient "articles_export".
-    if "/" in target_name:
-        dataset_folder, final_table_name = target_name.rsplit("/", 1)
-    else:
-        dataset_folder = None
-        final_table_name = target_name
-
-    # -------------------------------------------------------------------------
-    # 3. PRÉPARATION DE LA RESSOURCE SOURCE POSTGRESQL
+    # 2. PRÉPARATION DE LA RESSOURCE SOURCE POSTGRESQL
     # -------------------------------------------------------------------------
     dlt_kwargs = {
         "table": source_table,
@@ -49,23 +38,27 @@ def run_export_pipeline():
 
     resource = sql_table(**dlt_kwargs)
 
-    if final_table_name != source_table:
-        print(f"✏️ Nom de la ressource DLT : '{source_table}' -> '{final_table_name}'")
-        resource = resource.with_name(final_table_name)
+    # Assigne le chemin complet avec les slashes directement au nom de la ressource
+    if target_name != source_table:
+        print(f"✏️ Nom de la ressource DLT : '{source_table}' -> '{target_name}'")
+        resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 4. EXÉCUTION DU PIPELINE DLT
+    # 3. EXÉCUTION DU PIPELINE DLT (LAYOUT PERSONNALISÉ)
     # -------------------------------------------------------------------------
+    # dataset_name="" évite la création d'un dossier racine auto-généré par DLT
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
         destination="filesystem",
-        dataset_name=dataset_folder,  # Fixe le sous-dossier exact (ex: "referentiel" ou "billetique/ventes")
+        dataset_name="",
     )
 
+    # Le paramètre layout force DLT à conserver la hiérarchie brute de table_name
     load_info = pipeline.run(
         resource,
         write_disposition=write_strategy,
         loader_file_format="parquet",
+        layout="{table_name}/{load_id}.{file_id}.{ext}",
     )
 
     print("\n✅ Export DLT terminé avec succès !")
