@@ -3,30 +3,24 @@ import sys
 import dlt
 from dlt.sources.sql_database import sql_table
 
-# -----------------------------------------------------------------------------
-# 1. LECTURE STRICTE DES VARIABLES D'ENVIRONNEMENT
-# -----------------------------------------------------------------------------
 try:
     pipeline_id = os.environ["DLT_PIPELINE_ID"]
     source_schema = os.environ["DLT_SOURCE_SCHEMA"]
     dataset_name = os.environ["DLT_DATASET_NAME"]
     source_table = os.environ["DLT_SOURCE_TABLE"]
-    target_name = os.environ["DLT_TARGET_NAME"]  # ex: "referentiel/articles_export"
+    target_name = os.environ["DLT_TARGET_NAME"]
     backend = os.environ["DLT_BACKEND"].lower()
     chunk_size = int(os.environ["DLT_CHUNK_SIZE"])
     write_strategy = os.environ["DLT_WRITE_STRATEGY"].lower()
 except KeyError as e:
-    print(f"❌ ERREUR CRITIQUE : La variable d'environnement {e} est absente.")
+    print(f"❌ ERREUR CRITIQUE : Variable {e} absente.")
     sys.exit(1)
 
 
 def run_export_pipeline():
-    print(f"🚀 Démarrage export DLT Native (Table Format: DELTA) - Engine: {backend} - Strategy: {write_strategy}")
-    print(f"📦 Source : {source_schema}.{source_table} -> Cible Delta : {dataset_name}/{target_name}")
+    print(f"🚀 Export DLT Delta Lake - Engine: {backend} - Strategy: {write_strategy}")
+    print(f"📦 Source : {source_schema}.{source_table} -> Cible : {dataset_name}/{target_name}")
 
-    # -------------------------------------------------------------------------
-    # 2. PRÉPARATION DE LA RESSOURCE SOURCE POSTGRESQL
-    # -------------------------------------------------------------------------
     dlt_kwargs = {
         "table": source_table,
         "schema": source_schema,
@@ -40,27 +34,21 @@ def run_export_pipeline():
     resource = sql_table(**dlt_kwargs)
 
     if target_name != source_table:
-        print(f"✏️ Renommage de la ressource DLT : '{source_table}' -> '{target_name}'")
         resource = resource.with_name(target_name)
 
-    # -------------------------------------------------------------------------
-    # 3. EXÉCUTION DU PIPELINE DLT (DESTINATION FILESYSTEM + TABLE_FORMAT DELTA)
-    # -------------------------------------------------------------------------
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
         destination="filesystem",
         dataset_name=dataset_name,
     )
 
-    # C'est table_format="delta" qui active le moteur Delta Lake !
     load_info = pipeline.run(
         resource,
         write_disposition=write_strategy,
-        table_format="delta",  # <-- ACTIVATEUR NATIVE DELTA LAKE
+        table_format="delta",  # Génère _delta_log
     )
 
     print("\n✅ Export Delta Lake terminé avec succès !")
-    print(pipeline.last_trace)
     print(load_info)
 
 
