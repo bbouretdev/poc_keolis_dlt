@@ -11,7 +11,7 @@ try:
     source_schema = os.environ["DLT_SOURCE_SCHEMA"]
     dataset_name = os.environ["DLT_DATASET_NAME"]
     source_table = os.environ["DLT_SOURCE_TABLE"]
-    target_name = os.environ["DLT_TARGET_NAME"]  # ex: "ventes/commandes_export"
+    target_name = os.environ["DLT_TARGET_NAME"]  # ex: "referentiel/articles_export"
     backend = os.environ["DLT_BACKEND"].lower()
     chunk_size = int(os.environ["DLT_CHUNK_SIZE"])
     write_strategy = os.environ["DLT_WRITE_STRATEGY"].lower()
@@ -21,7 +21,7 @@ except KeyError as e:
 
 
 def run_export_pipeline():
-    print(f"🚀 Démarrage export DLT Native (Delta Lake) - Engine: {backend} - Strategy: {write_strategy}")
+    print(f"🚀 Démarrage export DLT Native (Destination Delta) - Engine: {backend} - Strategy: {write_strategy}")
     print(f"📦 Source : {source_schema}.{source_table} -> Cible Delta : {dataset_name}/{target_name}")
 
     # -------------------------------------------------------------------------
@@ -44,18 +44,18 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 3. EXÉCUTION DU PIPELINE DLT (FORMAT DELTA LAKE)
+    # 3. EXÉCUTION DU PIPELINE DLT (DESTINATION DELTA)
     # -------------------------------------------------------------------------
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
-        destination="filesystem",
+        destination="delta",
         dataset_name=dataset_name,
     )
 
     load_info = pipeline.run(
         resource,
         write_disposition=write_strategy,
-        loader_file_format="delta",
+        loader_file_format="parquet",  # <-- Staging en Parquet
     )
 
     print("\n✅ Export Delta Lake terminé avec succès !")
