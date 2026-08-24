@@ -9,8 +9,9 @@ from dlt.sources.sql_database import sql_table
 try:
     pipeline_id = os.environ["DLT_PIPELINE_ID"]
     source_schema = os.environ["DLT_SOURCE_SCHEMA"]
+    dataset_name = os.environ["DLT_DATASET_NAME"]
     source_table = os.environ["DLT_SOURCE_TABLE"]
-    target_name = os.environ["DLT_TARGET_NAME"]  # ex: "billetique/ventes/commandes_export"
+    target_name = os.environ["DLT_TARGET_NAME"]  # ex: "ventes/commandes_export"
     backend = os.environ["DLT_BACKEND"].lower()
     chunk_size = int(os.environ["DLT_CHUNK_SIZE"])
     write_strategy = os.environ["DLT_WRITE_STRATEGY"].lower()
@@ -21,7 +22,7 @@ except KeyError as e:
 
 def run_export_pipeline():
     print(f"🚀 Démarrage export DLT Native - Engine: {backend} - Strategy: {write_strategy}")
-    print(f"📦 Source : {source_schema}.{source_table} -> Cible : {target_name}")
+    print(f"📦 Source : {source_schema}.{source_table} -> Cible : {dataset_name}/{target_name}")
 
     # -------------------------------------------------------------------------
     # 2. PRÉPARATION DE LA RESSOURCE SOURCE POSTGRESQL
@@ -38,9 +39,8 @@ def run_export_pipeline():
 
     resource = sql_table(**dlt_kwargs)
 
-    # Attribution du chemin relatif complet
     if target_name != source_table:
-        print(f"✏️ Nom de la ressource DLT : '{source_table}' -> '{target_name}'")
+        print(f"✏️ Renommage de la ressource DLT : '{source_table}' -> '{target_name}'")
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
@@ -49,7 +49,7 @@ def run_export_pipeline():
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
         destination="filesystem",
-        dataset_name="",  # Évite d'ajouter un dossier préfixe
+        dataset_name=dataset_name,  # Fixe le domaine racine (ex: "billetique")
     )
 
     load_info = pipeline.run(
