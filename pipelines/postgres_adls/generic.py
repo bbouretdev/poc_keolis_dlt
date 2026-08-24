@@ -1,7 +1,6 @@
 import os
 import sys
 import dlt
-from dlt.destinations import filesystem
 from dlt.sources.sql_database import sql_table
 
 # -----------------------------------------------------------------------------
@@ -22,7 +21,7 @@ except KeyError as e:
 
 
 def run_export_pipeline():
-    print(f"🚀 Démarrage export DLT Native (Delta Lake) - Engine: {backend} - Strategy: {write_strategy}")
+    print(f"🚀 Démarrage export DLT Native (Table Format: DELTA) - Engine: {backend} - Strategy: {write_strategy}")
     print(f"📦 Source : {source_schema}.{source_table} -> Cible Delta : {dataset_name}/{target_name}")
 
     # -------------------------------------------------------------------------
@@ -45,20 +44,19 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 3. CONFIGURATION DESTINATION FILESYSTEM + FORMAT DELTA
+    # 3. EXÉCUTION DU PIPELINE DLT (DESTINATION FILESYSTEM + TABLE_FORMAT DELTA)
     # -------------------------------------------------------------------------
-    # On configure explicitement la destination filesystem pour utiliser le format delta
-    delta_destination = filesystem(file_format="delta")
-
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
-        destination=delta_destination,
+        destination="filesystem",
         dataset_name=dataset_name,
     )
 
+    # C'est table_format="delta" qui active le moteur Delta Lake !
     load_info = pipeline.run(
         resource,
         write_disposition=write_strategy,
+        table_format="delta",  # <-- ACTIVATEUR NATIVE DELTA LAKE
     )
 
     print("\n✅ Export Delta Lake terminé avec succès !")
