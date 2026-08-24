@@ -45,7 +45,7 @@ def run_export_pipeline():
     load_info = pipeline.run(
         resource,
         write_disposition=write_strategy,
-        table_format="delta",  # Génère _delta_log
+        table_format="delta",
     )
 
     print("\n✅ Export Delta Lake terminé avec succès !")
