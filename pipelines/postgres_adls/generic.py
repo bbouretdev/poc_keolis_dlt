@@ -25,15 +25,15 @@ except KeyError as e:
 
 
 # -----------------------------------------------------------------------------
-# 2. TRANSFORMER DLT SUR LA DATE MÉTIER
+# 2. TRANSFORMER DLT POUR DATE MÉTIER
 # -----------------------------------------------------------------------------
 def add_date_partitions(date_column: str):
     def _stamp(table: pa.Table) -> pa.Table:
         col = table.column(date_column)
         return (
-            table.append_column("Year", pc.year(col))
-            .append_column("Month", pc.month(col))
-            .append_column("Day", pc.day(col))
+            table.append_column("year", pc.year(col))
+            .append_column("month", pc.month(col))
+            .append_column("day", pc.day(col))
         )
 
     @dlt.transformer(name=f"add_date_partitions_from_{date_column.lower()}")
@@ -68,21 +68,22 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 4. CALCUL DES PARTITIONS DE DONNÉES MÉTIERS
+    # 4. CALCUL ET INJECTION DES COLONNES MÉTIERS
     # -------------------------------------------------------------------------
     extra_columns = {}
     if partition_col:
         print(f"📅 Partitionnement sur la date métier : {partition_col}")
         base_columns = dict(resource.columns)
         
-        # Extraction vectorielle des colonnes métiers Year, Month, Day
+        # Injection du transformer PyArrow
         resource = (resource | add_date_partitions(date_column=partition_col)).with_name(target_name)
         
+        # Hints de partitionnement
         extra_columns = {
             **base_columns,
-            "Year": {"partition": True, "data_type": "bigint"},
-            "Month": {"partition": True, "data_type": "bigint"},
-            "Day": {"partition": True, "data_type": "bigint"},
+            "year": {"partition": True, "data_type": "bigint"},
+            "month": {"partition": True, "data_type": "bigint"},
+            "day": {"partition": True, "data_type": "bigint"},
         }
 
     resource.apply_hints(
