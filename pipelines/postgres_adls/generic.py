@@ -68,17 +68,17 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 4. PARSE & INJECTION DU PARTITIONNEMENT HIVE
+    # 4. INJECTION DU TRANSFORMER ET DES HINTS DE PARTITIONNEMENT
     # -------------------------------------------------------------------------
     extra_columns = {}
     if partition_col:
         print(f"📅 Partitionnement activé sur la colonne : {partition_col}")
         base_columns = dict(resource.columns)
         
-        # Injection du transformer PyArrow dans le pipeline DLT
+        # Application du transformer PyArrow
         resource = (resource | add_date_partitions(date_column=partition_col)).with_name(target_name)
         
-        # Hints pour indiquer à DLT/Delta-RS que ces 3 colonnes forment les dossiers Hive
+        # Hints indiquant à DLT les colonnes de partitionnement
         extra_columns = {
             **base_columns,
             "Year": {"partition": True, "data_type": "bigint"},
@@ -86,7 +86,6 @@ def run_export_pipeline():
             "Day": {"partition": True, "data_type": "bigint"},
         }
 
-    # Application des Hints DLT
     resource.apply_hints(
         write_disposition=write_strategy,
         file_format="parquet",
@@ -95,6 +94,8 @@ def run_export_pipeline():
 
     # -------------------------------------------------------------------------
     # 5. EXECUTION DU PIPELINE
+    # DLT lit destination="filesystem" et résout automatiquement
+    # DESTINATION__FILESYSTEM__BUCKET_URL et DESTINATION__FILESYSTEM__LAYOUT
     # -------------------------------------------------------------------------
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
