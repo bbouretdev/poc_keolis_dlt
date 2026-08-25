@@ -1,14 +1,19 @@
 import os
 import sys
+from typing import Any
 import dlt
 from dlt.sources.sql_database import sql_table
+import pyarrow as pa
+import pyarrow.compute as pc
 
+# Variables d'environnement
 try:
     pipeline_id = os.environ["DLT_PIPELINE_ID"]
     source_schema = os.environ["DLT_SOURCE_SCHEMA"]
     dataset_name = os.environ["DLT_DATASET_NAME"]
     source_table = os.environ["DLT_SOURCE_TABLE"]
     target_name = os.environ["DLT_TARGET_NAME"]
+    partition_col = os.environ.get("DLT_PARTITION_COL", "").strip()
     backend = os.environ["DLT_BACKEND"].lower()
     chunk_size = int(os.environ["DLT_CHUNK_SIZE"])
     write_strategy = os.environ["DLT_WRITE_STRATEGY"].lower()
@@ -17,8 +22,27 @@ except KeyError as e:
     sys.exit(1)
 
 
+# Transformer DLT Native (calcul vectoriel PyArrow)
+def add_date_partitions(date_column: str):
+    def _stamp(table: pa.Table) -> pa.Table:
+        col = table.column(date_column)
+        return (
+            table.append_column("Year", pc.year(col))
+            .append_column("Month", pc.month(col))
+            .append_column("Day", pc.day(col))
+        )
+
+    @dlt.transformer(name=f"add_date_partitions_from_{date_column.lower()}")
+    def _transformer(item: Any):
+        if isinstance(item, pa.RecordBatch):
+            item = pa.Table.from_batches([item])
+        yield _stamp(item)
+
+    return _transformer
+
+
 def run_export_pipeline():
-    print(f"🚀 Export DLT Delta Lake - Engine: {backend} - Strategy: {write_strategy}")
+    print(f"🚀 Export DLT - Strategy: {write_strategy}")
     print(f"📦 Source : {source_schema}.{source_table} -> Cible : {dataset_name}/{target_name}")
 
     dlt_kwargs = {
@@ -36,19 +60,40 @@ def run_export_pipeline():
     if target_name != source_table:
         resource = resource.with_name(target_name)
 
+    # Application du partitionnement Hive si une colonne de date est définie
+    extra_columns = {}
+    if partition_col:
+        print(f"📅 Partitionnement activé sur la colonne : {partition_col}")
+        # Conservons les colonnes initiales
+        base_columns = dict(resource.columns)
+        
+        # Injection du transformer PyArrow
+        resource = (resource | add_date_partitions(date_column=partition_col)).with_name(target_name)
+        
+        # Hints de partitionnement
+        extra_columns = {
+            **base_columns,
+            "Year": {"partition": True, "data_type": "bigint"},
+            "Month": {"partition": True, "data_type": "bigint"},
+            "Day": {"partition": True, "data_type": "bigint"},
+        }
+
+    # Application des Hints DLT
+    resource.apply_hints(
+        write_disposition=write_strategy,
+        file_format="parquet",  # Ou table_format="delta" sur le vrai ADLS
+        columns=extra_columns if partition_col else None,
+    )
+
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
         destination="filesystem",
         dataset_name=dataset_name,
     )
 
-    load_info = pipeline.run(
-        resource,
-        write_disposition=write_strategy,
-        table_format="delta",
-    )
+    load_info = pipeline.run(resource)
 
-    print("\n✅ Export Delta Lake terminé avec succès !")
+    print("\n✅ Export terminé avec succès !")
     print(load_info)
 
 
