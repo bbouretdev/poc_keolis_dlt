@@ -6,7 +6,9 @@ from dlt.sources.sql_database import sql_table
 import pyarrow as pa
 import pyarrow.compute as pc
 
-# Variables d'environnement
+# -----------------------------------------------------------------------------
+# 1. LECTURE DES VARIABLES D'ENVIRONNEMENT
+# -----------------------------------------------------------------------------
 try:
     pipeline_id = os.environ["DLT_PIPELINE_ID"]
     source_schema = os.environ["DLT_SOURCE_SCHEMA"]
@@ -22,7 +24,9 @@ except KeyError as e:
     sys.exit(1)
 
 
-# Transformer DLT Native (calcul vectoriel PyArrow)
+# -----------------------------------------------------------------------------
+# 2. TRANSFORMER DLT-NATIVE (CALCUL VECTORIEL PYARROW)
+# -----------------------------------------------------------------------------
 def add_date_partitions(date_column: str):
     def _stamp(table: pa.Table) -> pa.Table:
         col = table.column(date_column)
@@ -45,6 +49,9 @@ def run_export_pipeline():
     print(f"🚀 Export DLT - Strategy: {write_strategy}")
     print(f"📦 Source : {source_schema}.{source_table} -> Cible : {dataset_name}/{target_name}")
 
+    # -------------------------------------------------------------------------
+    # 3. PRÉPARATION DE LA RESSOURCE SOURCE
+    # -------------------------------------------------------------------------
     dlt_kwargs = {
         "table": source_table,
         "schema": source_schema,
@@ -60,17 +67,18 @@ def run_export_pipeline():
     if target_name != source_table:
         resource = resource.with_name(target_name)
 
-    # Application du partitionnement Hive si une colonne de date est définie
+    # -------------------------------------------------------------------------
+    # 4. PARSE & INJECTION DU PARTITIONNEMENT HIVE
+    # -------------------------------------------------------------------------
     extra_columns = {}
     if partition_col:
         print(f"📅 Partitionnement activé sur la colonne : {partition_col}")
-        # Conservons les colonnes initiales
         base_columns = dict(resource.columns)
         
-        # Injection du transformer PyArrow
+        # Injection du transformer PyArrow dans le pipeline DLT
         resource = (resource | add_date_partitions(date_column=partition_col)).with_name(target_name)
         
-        # Hints de partitionnement
+        # Hints pour indiquer à DLT/Delta-RS que ces 3 colonnes forment les dossiers Hive
         extra_columns = {
             **base_columns,
             "Year": {"partition": True, "data_type": "bigint"},
@@ -81,10 +89,13 @@ def run_export_pipeline():
     # Application des Hints DLT
     resource.apply_hints(
         write_disposition=write_strategy,
-        file_format="parquet",  # Ou table_format="delta" sur le vrai ADLS
+        file_format="parquet",
         columns=extra_columns if partition_col else None,
     )
 
+    # -------------------------------------------------------------------------
+    # 5. EXECUTION DU PIPELINE
+    # -------------------------------------------------------------------------
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
         destination="filesystem",
