@@ -1,7 +1,10 @@
 import os
 import sys
+from typing import Any
 import dlt
 from dlt.sources.sql_database import sql_table
+import pyarrow as pa
+import pyarrow.compute as pc
 
 # -----------------------------------------------------------------------------
 # 1. LECTURE DES VARIABLES D'ENVIRONNEMENT
@@ -21,14 +24,33 @@ except KeyError as e:
     sys.exit(1)
 
 
+# -----------------------------------------------------------------------------
+# 2. TRANSFORMER DLT SUR LA DATE MÉTIER
+# -----------------------------------------------------------------------------
+def add_date_partitions(date_column: str):
+    def _stamp(table: pa.Table) -> pa.Table:
+        col = table.column(date_column)
+        return (
+            table.append_column("Year", pc.year(col))
+            .append_column("Month", pc.month(col))
+            .append_column("Day", pc.day(col))
+        )
+
+    @dlt.transformer(name=f"add_date_partitions_from_{date_column.lower()}")
+    def _transformer(item: Any):
+        if isinstance(item, pa.RecordBatch):
+            item = pa.Table.from_batches([item])
+        yield _stamp(item)
+
+    return _transformer
+
+
 def run_export_pipeline():
     print(f"🚀 Export DLT - Strategy: {write_strategy}")
     print(f"📦 Source : {source_schema}.{source_table} -> Cible : {dataset_name}/{target_name}")
-    if partition_col:
-        print(f"📅 Partitionnement activé sur la colonne : {partition_col}")
 
     # -------------------------------------------------------------------------
-    # 2. PRÉPARATION DE LA RESSOURCE SOURCE
+    # 3. PRÉPARATION DE LA RESSOURCE SOURCE
     # -------------------------------------------------------------------------
     dlt_kwargs = {
         "table": source_table,
@@ -42,19 +64,35 @@ def run_export_pipeline():
 
     resource = sql_table(**dlt_kwargs)
 
-    # Renommage de la ressource si un chemin cible spécifique est fourni
     if target_name != source_table:
         resource = resource.with_name(target_name)
+
+    # -------------------------------------------------------------------------
+    # 4. CALCUL DES PARTITIONS DE DONNÉES MÉTIERS
+    # -------------------------------------------------------------------------
+    extra_columns = {}
+    if partition_col:
+        print(f"📅 Partitionnement sur la date métier : {partition_col}")
+        base_columns = dict(resource.columns)
+        
+        # Extraction vectorielle des colonnes métiers Year, Month, Day
+        resource = (resource | add_date_partitions(date_column=partition_col)).with_name(target_name)
+        
+        extra_columns = {
+            **base_columns,
+            "Year": {"partition": True, "data_type": "bigint"},
+            "Month": {"partition": True, "data_type": "bigint"},
+            "Day": {"partition": True, "data_type": "bigint"},
+        }
 
     resource.apply_hints(
         write_disposition=write_strategy,
         file_format="parquet",
+        columns=extra_columns if partition_col else None,
     )
 
     # -------------------------------------------------------------------------
-    # 3. EXECUTION DU PIPELINE
-    # DLT lit destination="filesystem" et résout automatiquement
-    # DESTINATION__FILESYSTEM__BUCKET_URL et DESTINATION__FILESYSTEM__LAYOUT
+    # 5. EXECUTION DU PIPELINE
     # -------------------------------------------------------------------------
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
