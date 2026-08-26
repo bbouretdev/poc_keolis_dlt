@@ -88,7 +88,7 @@ def run_export_pipeline():
     bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
 
     if use_azurite:
-        azurite_endpoint = "http://azurite:10000/devstoreaccount1"
+        azurite_endpoint = "http://azurite:10000"
         destination_obj = filesystem(
             bucket_url=bucket_url,
             deltalake_storage_options={
