@@ -1,10 +1,68 @@
 import os
 import sys
+import socket
+import threading
 import dlt
 from dlt.destinations import filesystem
 from dlt.sources.sql_database import sql_table
 import pyarrow as pa
 import pyarrow.compute as pc
+
+# -----------------------------------------------------------------------------
+# 0. PROXY TCP PYTHON (Contournement de 127.0.0.1:10000 -> azurite:10000)
+# -----------------------------------------------------------------------------
+def start_tcp_proxy(local_port=10000, remote_host="azurite", remote_port=10000):
+    """
+    Proxy TCP purement Python (standard library) pour intercepter
+    127.0.0.1:10000 (force par delta-rs avec use_emulator) et rediriger vers azurite:10000.
+    """
+    def handle_client(client_socket):
+        try:
+            remote_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            remote_socket.connect((remote_host, remote_port))
+        except Exception as err:
+            client_socket.close()
+            return
+
+        def forward(src, dst):
+            try:
+                while True:
+                    data = src.recv(8192)
+                    if not data:
+                        break
+                    dst.sendall(data)
+            except Exception:
+                pass
+            finally:
+                try:
+                    src.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass
+                try:
+                    dst.shutdown(socket.SHUT_RDWR)
+                except Exception:
+                    pass
+
+        t1 = threading.Thread(target=forward, args=(client_socket, remote_socket), daemon=True)
+        t2 = threading.Thread(target=forward, args=(remote_socket, client_socket), daemon=True)
+        t1.start()
+        t2.start()
+
+    def server_loop():
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            server_socket.bind(("127.0.0.1", local_port))
+            server_socket.listen(128)
+            print(f"🔌 Proxy TCP local actif : 127.0.0.1:{local_port} ➔ {remote_host}:{remote_port}")
+            while True:
+                client_sock, _ = server_socket.accept()
+                threading.Thread(target=handle_client, args=(client_sock,), daemon=True).start()
+        except Exception as e:
+            print(f"⚠️ Avertissement Proxy TCP : {e}")
+
+    threading.Thread(target=server_loop, daemon=True).start()
+
 
 # -----------------------------------------------------------------------------
 # 1. LECTURE DES VARIABLES D'ENVIRONNEMENT
@@ -23,6 +81,11 @@ try:
 except KeyError as e:
     print(f"❌ ERREUR CRITIQUE : Variable {e} absente.")
     sys.exit(1)
+
+
+# Démarrage du proxy local uniquement en mode Azurite
+if use_azurite:
+    start_tcp_proxy(local_port=10000, remote_host="azurite", remote_port=10000)
 
 
 # -----------------------------------------------------------------------------
@@ -83,7 +146,7 @@ def run_export_pipeline():
     )
 
     # -------------------------------------------------------------------------
-    # 5. RESOLUTION DE LA DESTINATION (MODE EMULATEUR SOCAT)
+    # 5. RESOLUTION DE LA DESTINATION (MODE EMULATEUR LOCAL)
     # -------------------------------------------------------------------------
     bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
 
