@@ -25,24 +25,17 @@ except KeyError as e:
 
 
 # -----------------------------------------------------------------------------
-# 2. TRANSFORMER DLT SUR DATE MÉTIER
+# 2. ENRICHISSEMENT DE LA TABLE PARROW (SANS BINDINGS DLT COMPLEXES)
 # -----------------------------------------------------------------------------
-def add_date_partitions(date_column: str):
-    def _stamp(table: pa.Table) -> pa.Table:
-        col = table.column(date_column)
-        return (
-            table.append_column("year", pc.year(col))
-            .append_column("month", pc.month(col))
-            .append_column("day", pc.day(col))
-        )
-
-    @dlt.transformer(name=f"add_date_partitions_from_{date_column.lower()}")
-    def _transformer(item: Any):
-        if isinstance(item, pa.RecordBatch):
-            item = pa.Table.from_batches([item])
-        yield _stamp(item)
-
-    return _transformer
+def add_date_partitions(table: pa.Table) -> pa.Table:
+    if not partition_col or partition_col not in table.column_names:
+        return table
+    col = table.column(partition_col)
+    return (
+        table.append_column("year", pc.year(col))
+        .append_column("month", pc.month(col))
+        .append_column("day", pc.day(col))
+    )
 
 
 def run_export_pipeline():
@@ -50,7 +43,7 @@ def run_export_pipeline():
     print(f"📦 Source : {source_schema}.{source_table} -> Cible : {dataset_name}/{target_name}")
 
     # -------------------------------------------------------------------------
-    # 3. PRÉPARATION DE LA RESSOURCE SOURCE
+    # 3. CRÉATION DE LA RESSOURCE SOURCE
     # -------------------------------------------------------------------------
     dlt_kwargs = {
         "table": source_table,
@@ -68,19 +61,17 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 4. CALCUL ET INJECTION DES COLONNES MÉTIERS DANS LE SCHÉMA DLT
+    # 4. PARTITIONNEMENT
     # -------------------------------------------------------------------------
-    extra_columns = {}
+    columns_hints = {}
     if partition_col:
-        print(f"📅 Partitionnement sur la date métier : {partition_col}")
-        base_columns = dict(resource.columns)
+        print(f"📅 Partitionnement activé sur la colonne : {partition_col}")
         
-        # Application du transformer PyArrow
-        resource = (resource | add_date_partitions(date_column=partition_col)).with_name(target_name)
+        # Transformation directe du stream Arrow
+        resource.add_map(add_date_partitions)
         
-        # Indique à DLT que 'year', 'month', 'day' sont des colonnes de partition
-        extra_columns = {
-            **base_columns,
+        # Hints indiquant simplement à DLT les colonnes de sous-dossiers
+        columns_hints = {
             "year": {"partition": True, "data_type": "bigint"},
             "month": {"partition": True, "data_type": "bigint"},
             "day": {"partition": True, "data_type": "bigint"},
@@ -89,42 +80,17 @@ def run_export_pipeline():
     resource.apply_hints(
         write_disposition=write_strategy,
         file_format="parquet",
-        columns=extra_columns if partition_col else None,
+        columns=columns_hints if partition_col else None,
     )
 
     # -------------------------------------------------------------------------
     # 5. EXECUTION DU PIPELINE
     # -------------------------------------------------------------------------
-    if partition_col:
-        layout_pattern = "{table_name}/Year={year}/Month={month}/Day={day}/{file_id}.{ext}"
-        # On passe extra_placeholders sous forme de dictionnaire de fonctions/valeurs réelles
-        # DLT saura qu'il doit évaluer dynamiquement ces clés depuis chaque RecordBatch
-        dest = dlt.destinations.filesystem(
-            layout=layout_pattern,
-            extra_placeholders={
-                "year": lambda item: item["year"],
-                "month": lambda item: item["month"],
-                "day": lambda item: item["day"],
-            } if False else None  # Astuce DLT : laisser le schéma gérer directement
-        )
-    else:
-        dest = "filesystem"
-
-    # Si partition_col est présent, on indique le layout via la config du pipeline
-    pipeline_kwargs = {
-        "pipeline_name": pipeline_id,
-        "destination": "filesystem",
-        "dataset_name": dataset_name,
-    }
-
-    pipeline = dlt.pipeline(**pipeline_kwargs)
-
-    # On passe le layout dynamique au niveau de la méthode run si partition_col existe
-    run_kwargs = {}
-    if partition_col:
-        layout_pattern = "{table_name}/Year={year}/Month={month}/Day={day}/{file_id}.{ext}"
-        # Configuration dynamique de la destination dans le pipeline
-        pipeline.destination_client().config.layout = layout_pattern
+    pipeline = dlt.pipeline(
+        pipeline_name=pipeline_id,
+        destination="filesystem",
+        dataset_name=dataset_name,
+    )
 
     load_info = pipeline.run(resource)
 
