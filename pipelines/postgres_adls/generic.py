@@ -1,6 +1,5 @@
 import os
 import sys
-from typing import Any
 import dlt
 from dlt.sources.sql_database import sql_table
 import pyarrow as pa
@@ -32,18 +31,18 @@ def add_date_partitions(table: pa.Table) -> pa.Table:
         return table
     col = table.column(partition_col)
     return (
-        table.append_column("year", pc.year(col))
-        .append_column("month", pc.month(col))
-        .append_column("day", pc.day(col))
+        table.append_column("Year", pc.year(col))
+        .append_column("Month", pc.month(col))
+        .append_column("Day", pc.day(col))
     )
 
 
 def run_export_pipeline():
-    print(f"🚀 Export DLT - Strategy: {write_strategy}")
+    print(f"🚀 Export DLT Delta Lake - Strategy: {write_strategy}")
     print(f"📦 Source : {source_schema}.{source_table} -> Cible : {dataset_name}/{target_name}")
 
     # -------------------------------------------------------------------------
-    # 3. PRÉPARATION DE LA RESSOURCE SOURCE
+    # 3. CRÉATION DE LA RESSOURCE SOURCE
     # -------------------------------------------------------------------------
     dlt_kwargs = {
         "table": source_table,
@@ -61,30 +60,30 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 4. CALCUL ET INJECTION DES COLONNES MÉTIERS
+    # 4. PARTITIONNEMENT DELTA LAKE
     # -------------------------------------------------------------------------
     columns_hints = {}
     if partition_col:
-        print(f"📅 Partitionnement activé sur la colonne : {partition_col}")
+        print(f"📅 Partitionnement Delta Lake activé sur la colonne : {partition_col}")
         
         # Injection de la transformation vectorielle Arrow
         resource.add_map(add_date_partitions)
         
-        # Hints de partitionnement
+        # Hints indiquant à Delta-RS les colonnes de sous-dossiers
         columns_hints = {
-            "year": {"partition": True, "data_type": "bigint"},
-            "month": {"partition": True, "data_type": "bigint"},
-            "day": {"partition": True, "data_type": "bigint"},
+            "Year": {"partition": True, "data_type": "bigint"},
+            "Month": {"partition": True, "data_type": "bigint"},
+            "Day": {"partition": True, "data_type": "bigint"},
         }
 
     resource.apply_hints(
         write_disposition=write_strategy,
-        file_format="parquet",
+        table_format="delta",  # Active le moteur Delta Lake (Delta-RS)
         columns=columns_hints if partition_col else None,
     )
 
     # -------------------------------------------------------------------------
-    # 5. EXECUTION DU PIPELINE ET CONFIGURATION DYNAMIQUE DU LAYOUT
+    # 5. EXECUTION DU PIPELINE
     # -------------------------------------------------------------------------
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
@@ -92,14 +91,9 @@ def run_export_pipeline():
         dataset_name=dataset_name,
     )
 
-    # Application dynamique du layout une fois les hints enregistrés sur la ressource
-    if partition_col:
-        layout_pattern = "{table_name}/Year={year}/Month={month}/Day={day}/{file_id}.{ext}"
-        pipeline.destination_client().config.layout = layout_pattern
-
     load_info = pipeline.run(resource)
 
-    print("\n✅ Export terminé avec succès !")
+    print("\n✅ Export Delta Lake terminé avec succès !")
     print(load_info)
 
 
