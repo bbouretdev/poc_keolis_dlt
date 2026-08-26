@@ -20,6 +20,7 @@ try:
     chunk_size = int(os.environ["DLT_CHUNK_SIZE"])
     write_strategy = os.environ["DLT_WRITE_STRATEGY"].lower()
     use_azurite = os.environ.get("USE_AZURITE", "false").lower() in ("true", "1", "yes")
+    bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
 except KeyError as e:
     print(f"❌ ERREUR CRITIQUE : Variable {e} absente.")
     sys.exit(1)
@@ -64,20 +65,28 @@ def run_export_pipeline():
     # -------------------------------------------------------------------------
     # 4. PARTITIONNEMENT DELTA LAKE
     # -------------------------------------------------------------------------
+    columns_hints = {}
+
     if partition_col:
         print(f"📅 Partitionnement Delta Lake activé sur la colonne : {partition_col}")
         resource.add_map(add_date_partitions)
+        
+        # Hints explicites pour obliger dlt / Delta Lake à partitionner par répertoire
+        columns_hints = {
+            "Year": {"partition": True, "data_type": "bigint"},
+            "Month": {"partition": True, "data_type": "bigint"},
+            "Day": {"partition": True, "data_type": "bigint"},
+        }
 
     resource.apply_hints(
         write_disposition=write_strategy,
         table_format="delta",
+        columns=columns_hints if partition_col else None,
     )
 
     # -------------------------------------------------------------------------
     # 5. RESOLUTION DE LA DESTINATION
     # -------------------------------------------------------------------------
-    bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
-
     if use_azurite:
         azurite_endpoint = "http://azurite:10000/devstoreaccount1"
         destination_obj = filesystem(
@@ -85,11 +94,9 @@ def run_export_pipeline():
             deltalake_storage_options={
                 "azure_storage_allow_http": "true",
                 "azure_storage_use_http": "true",
-                "allow_http": "true",
                 "azure_storage_account_name": "devstoreaccount1",
                 "azure_storage_account_key": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
                 "azure_endpoint_url": azurite_endpoint,
-                "azure_endpoint": azurite_endpoint,
             },
         )
     else:
