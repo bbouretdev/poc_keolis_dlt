@@ -64,13 +64,22 @@ def run_export_pipeline():
     # -------------------------------------------------------------------------
     # 4. PARTITIONNEMENT DELTA LAKE
     # -------------------------------------------------------------------------
+    columns_hints = {}
+
     if partition_col:
         print(f"📅 Partitionnement Delta Lake activé sur la colonne : {partition_col}")
         resource.add_map(add_date_partitions)
+        
+        columns_hints = {
+            "Year": {"partition": True, "data_type": "bigint"},
+            "Month": {"partition": True, "data_type": "bigint"},
+            "Day": {"partition": True, "data_type": "bigint"},
+        }
 
     resource.apply_hints(
         write_disposition=write_strategy,
         table_format="delta",
+        columns=columns_hints if partition_col else None,
     )
 
     # -------------------------------------------------------------------------
