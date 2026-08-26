@@ -83,20 +83,24 @@ def run_export_pipeline():
     )
 
     # -------------------------------------------------------------------------
-    # 5. RESOLUTION DE LA DESTINATION (SANS EMULATOR POUR SHUNTER 127.0.0.1)
+    # 5. RESOLUTION DE LA DESTINATION (REDIRECTION FORCEE VERS AZURITE)
     # -------------------------------------------------------------------------
     bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
 
     if use_azurite:
+        azurite_endpoint = "http://azurite:10000/devstoreaccount1"
         destination_obj = filesystem(
             bucket_url=bucket_url,
             deltalake_storage_options={
                 "azure_storage_allow_http": "true",
+                "azure_storage_use_emulator": "true",
                 "azure_storage_account_name": "devstoreaccount1",
                 "azure_storage_account_key": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
-                # Overrides explicites des endpoints Rust pour pointer sur l'hôte K8s azurite
-                "blob_endpoint": "http://azurite:10000/devstoreaccount1",
-                "data_lake_endpoint": "http://azurite:10000/devstoreaccount1",
+                # Surcharges réseau Rust explicites pour forcer l'URL K8s
+                "azure_endpoint": azurite_endpoint,
+                "azure_endpoint_url": azurite_endpoint,
+                "blob_endpoint": azurite_endpoint,
+                "data_lake_endpoint": azurite_endpoint,
             },
         )
     else:
