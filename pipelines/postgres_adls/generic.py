@@ -62,15 +62,14 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 4. PARTITIONNEMENT DELTA LAKE (MODIFIÉ POUR FORCER LES RÉPERTOIRES)
+    # 4. PARTITIONNEMENT DELTA LAKE
     # -------------------------------------------------------------------------
     columns_hints = {}
-
     if partition_col:
         print(f"📅 Partitionnement Delta Lake activé sur la colonne : {partition_col}")
+        
         resource.add_map(add_date_partitions)
-
-        # Indique explicitement au moteur Delta Lake de créer l'arborescence de répertoires
+        
         columns_hints = {
             "Year": {"partition": True, "data_type": "bigint"},
             "Month": {"partition": True, "data_type": "bigint"},
