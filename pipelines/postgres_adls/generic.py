@@ -20,7 +20,7 @@ try:
     chunk_size = int(os.environ["DLT_CHUNK_SIZE"])
     write_strategy = os.environ["DLT_WRITE_STRATEGY"].lower()
     use_azurite = os.environ.get("USE_AZURITE", "false").lower() in ("true", "1", "yes")
-    storage_format = os.environ.get("DLT_STORAGE_FORMAT", "delta").lower()  # <--- Option format ("delta" ou "parquet")
+    storage_format = os.environ.get("DLT_STORAGE_FORMAT", "delta").lower()
 except KeyError as e:
     print(f"❌ ERREUR CRITIQUE : Variable {e} absente.")
     sys.exit(1)
@@ -77,10 +77,12 @@ def run_export_pipeline():
             "Day": {"partition": True, "data_type": "bigint"},
         }
 
-    # Configuration dynamique du format de table (delta ou parquet)
+    # "parquet" n'est pas un table_format valide pour dlt (seuls delta, iceberg, etc. le sont)
+    table_format_value = storage_format if storage_format == "delta" else None
+
     resource.apply_hints(
         write_disposition=write_strategy,
-        table_format=storage_format,
+        table_format=table_format_value,
         columns=columns_hints if partition_col else None,
     )
 
@@ -89,7 +91,6 @@ def run_export_pipeline():
     # -------------------------------------------------------------------------
     bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
 
-    # Si le format est Delta, on passe deltalake_storage_options, sinon fsspec/dlt gère le parquet seul
     if storage_format == "delta":
         if use_azurite:
             azurite_endpoint = "http://azurite:10000/devstoreaccount1"
@@ -114,7 +115,7 @@ def run_export_pipeline():
                 },
             )
     else:
-        # Destination filesystem standard pour Parquet (utilise fsspec/adlfs avec les env_vars système)
+        # Format Parquet standard (utilise fsspec/adlfs nativement)
         destination_obj = filesystem(bucket_url=bucket_url)
 
     pipeline = dlt.pipeline(
