@@ -83,7 +83,7 @@ def run_export_pipeline():
     )
 
     # -------------------------------------------------------------------------
-    # 5. RESOLUTION DE LA DESTINATION (CONFIGURATION AZURITE OPTIMISÉE)
+    # 5. RESOLUTION DE LA DESTINATION
     # -------------------------------------------------------------------------
     bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
 
@@ -92,12 +92,9 @@ def run_export_pipeline():
             bucket_url=bucket_url,
             deltalake_storage_options={
                 "azure_storage_allow_http": "true",
-                "azure_storage_use_emulator": "true",
-                "azure_storage_emulator_host": "http://azurite:10000",
+                "azure_storage_use_emulator": "false",  # Crucial
                 "azure_storage_account_name": "devstoreaccount1",
                 "azure_storage_account_key": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
-                "timeout": "15s",
-                "max_retries": "2",
             },
         )
     else:
