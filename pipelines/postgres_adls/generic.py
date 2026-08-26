@@ -83,19 +83,18 @@ def run_export_pipeline():
     )
 
     # -------------------------------------------------------------------------
-    # 5. RESOLUTION DE LA DESTINATION (ENDPOINT RUST EXPLICITE)
+    # 5. RESOLUTION DE LA DESTINATION (SANS USE_EMULATOR POUR ÉVITER 127.0.0.1)
     # -------------------------------------------------------------------------
     bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
 
     if use_azurite:
+        # On définit directement l'endpoint HTTP vers l'hôte 'azurite'
+        # sans 'use_emulator' qui force le localhost (127.0.0.1)
         destination_obj = filesystem(
             bucket_url=bucket_url,
             deltalake_storage_options={
-                "use_emulator": "true",
-                "allow_http": "true",
-                "azure_storage_allow_http": "true",
-                # Force le SDK Rust à utiliser l'hôte K8s azurite et non 127.0.0.1
                 "azure_endpoint": "http://azurite:10000/devstoreaccount1",
+                "azure_storage_allow_http": "true",
             },
         )
     else:
