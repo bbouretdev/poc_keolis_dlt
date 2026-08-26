@@ -25,7 +25,7 @@ except KeyError as e:
 
 
 # -----------------------------------------------------------------------------
-# 2. TRANSFORMER DLT POUR DATE MÉTIER
+# 2. TRANSFORMER DLT SUR DATE MÉTIER
 # -----------------------------------------------------------------------------
 def add_date_partitions(date_column: str):
     def _stamp(table: pa.Table) -> pa.Table:
@@ -68,7 +68,7 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 4. CALCUL ET INJECTION DES COLONNES MÉTIERS
+    # 4. CALCUL DES PARTITIONS DE DONNÉES
     # -------------------------------------------------------------------------
     extra_columns = {}
     if partition_col:
@@ -78,7 +78,6 @@ def run_export_pipeline():
         # Injection du transformer PyArrow
         resource = (resource | add_date_partitions(date_column=partition_col)).with_name(target_name)
         
-        # Hints de partitionnement
         extra_columns = {
             **base_columns,
             "year": {"partition": True, "data_type": "bigint"},
@@ -94,10 +93,17 @@ def run_export_pipeline():
 
     # -------------------------------------------------------------------------
     # 5. EXECUTION DU PIPELINE
+    # Instanciation dynamique du layout de destination
     # -------------------------------------------------------------------------
+    layout_pattern = (
+        "{table_name}/Year={year}/Month={month}/Day={day}/{file_id}.{ext}"
+        if partition_col
+        else "{table_name}/{file_id}.{ext}"
+    )
+
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
-        destination="filesystem",
+        destination=dlt.destinations.filesystem(layout=layout_pattern),
         dataset_name=dataset_name,
     )
 
