@@ -20,6 +20,7 @@ try:
     chunk_size = int(os.environ["DLT_CHUNK_SIZE"])
     write_strategy = os.environ["DLT_WRITE_STRATEGY"].lower()
     use_azurite = os.environ.get("USE_AZURITE", "false").lower() in ("true", "1", "yes")
+    storage_format = os.environ.get("DLT_STORAGE_FORMAT", "delta").lower()  # <--- Option format ("delta" ou "parquet")
 except KeyError as e:
     print(f"❌ ERREUR CRITIQUE : Variable {e} absente.")
     sys.exit(1)
@@ -40,7 +41,7 @@ def add_date_partitions(table: pa.Table) -> pa.Table:
 
 
 def run_export_pipeline():
-    print(f"🚀 Export DLT Delta Lake - Strategy: {write_strategy}")
+    print(f"🚀 Export DLT (Format : {storage_format.upper()}) - Strategy : {write_strategy}")
     print(f"📦 Source : {source_schema}.{source_table} -> Cible : {dataset_name}/{target_name}")
 
     # -------------------------------------------------------------------------
@@ -62,23 +63,24 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 4. PARTITIONNEMENT DELTA LAKE
+    # 4. PARTITIONNEMENT
     # -------------------------------------------------------------------------
     columns_hints = {}
 
     if partition_col:
-        print(f"📅 Partitionnement Delta Lake activé sur la colonne : {partition_col}")
+        print(f"📅 Partitionnement activé sur la colonne : {partition_col}")
         resource.add_map(add_date_partitions)
-        
+
         columns_hints = {
             "Year": {"partition": True, "data_type": "bigint"},
             "Month": {"partition": True, "data_type": "bigint"},
             "Day": {"partition": True, "data_type": "bigint"},
         }
 
+    # Configuration dynamique du format de table (delta ou parquet)
     resource.apply_hints(
         write_disposition=write_strategy,
-        table_format="delta",
+        table_format=storage_format,
         columns=columns_hints if partition_col else None,
     )
 
@@ -87,28 +89,33 @@ def run_export_pipeline():
     # -------------------------------------------------------------------------
     bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
 
-    if use_azurite:
-        azurite_endpoint = "http://azurite:10000/devstoreaccount1"
-        destination_obj = filesystem(
-            bucket_url=bucket_url,
-            deltalake_storage_options={
-                "azure_storage_allow_http": "true",
-                "azure_storage_use_http": "true",
-                "allow_http": "true",
-                "azure_storage_account_name": "devstoreaccount1",
-                "azure_storage_account_key": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
-                "azure_endpoint_url": azurite_endpoint,
-                "azure_endpoint": azurite_endpoint,
-            },
-        )
+    # Si le format est Delta, on passe deltalake_storage_options, sinon fsspec/dlt gère le parquet seul
+    if storage_format == "delta":
+        if use_azurite:
+            azurite_endpoint = "http://azurite:10000/devstoreaccount1"
+            destination_obj = filesystem(
+                bucket_url=bucket_url,
+                deltalake_storage_options={
+                    "azure_storage_allow_http": "true",
+                    "azure_storage_use_http": "true",
+                    "allow_http": "true",
+                    "azure_storage_account_name": "devstoreaccount1",
+                    "azure_storage_account_key": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
+                    "azure_endpoint_url": azurite_endpoint,
+                    "azure_endpoint": azurite_endpoint,
+                },
+            )
+        else:
+            destination_obj = filesystem(
+                bucket_url=bucket_url,
+                deltalake_storage_options={
+                    "timeout": "60s",
+                    "max_retries": "3",
+                },
+            )
     else:
-        destination_obj = filesystem(
-            bucket_url=bucket_url,
-            deltalake_storage_options={
-                "timeout": "60s",
-                "max_retries": "3",
-            },
-        )
+        # Destination filesystem standard pour Parquet (utilise fsspec/adlfs avec les env_vars système)
+        destination_obj = filesystem(bucket_url=bucket_url)
 
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
@@ -118,7 +125,7 @@ def run_export_pipeline():
 
     load_info = pipeline.run(resource)
 
-    print("\n✅ Export Delta Lake terminé avec succès !")
+    print(f"\n✅ Export {storage_format.upper()} terminé avec succès !")
     print(load_info)
 
 
