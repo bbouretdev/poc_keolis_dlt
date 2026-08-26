@@ -71,7 +71,6 @@ def run_export_pipeline():
         print(f"📅 Partitionnement Delta Lake activé sur la colonne : {partition_col}")
         resource.add_map(add_date_partitions)
         
-        # Hints explicites pour obliger dlt / Delta Lake à partitionner par répertoire
         columns_hints = {
             "Year": {"partition": True, "data_type": "bigint"},
             "Month": {"partition": True, "data_type": "bigint"},
