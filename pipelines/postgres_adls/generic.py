@@ -25,7 +25,7 @@ except KeyError as e:
 
 
 # -----------------------------------------------------------------------------
-# 2. ENRICHISSEMENT DE LA TABLE PARROW (SANS BINDINGS DLT COMPLEXES)
+# 2. TRANSFORMER DLT SUR DATE MÉTIER
 # -----------------------------------------------------------------------------
 def add_date_partitions(table: pa.Table) -> pa.Table:
     if not partition_col or partition_col not in table.column_names:
@@ -43,7 +43,7 @@ def run_export_pipeline():
     print(f"📦 Source : {source_schema}.{source_table} -> Cible : {dataset_name}/{target_name}")
 
     # -------------------------------------------------------------------------
-    # 3. CRÉATION DE LA RESSOURCE SOURCE
+    # 3. PRÉPARATION DE LA RESSOURCE SOURCE
     # -------------------------------------------------------------------------
     dlt_kwargs = {
         "table": source_table,
@@ -61,16 +61,16 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 4. PARTITIONNEMENT
+    # 4. CALCUL ET INJECTION DES COLONNES MÉTIERS
     # -------------------------------------------------------------------------
     columns_hints = {}
     if partition_col:
         print(f"📅 Partitionnement activé sur la colonne : {partition_col}")
         
-        # Transformation directe du stream Arrow
+        # Injection de la transformation vectorielle Arrow
         resource.add_map(add_date_partitions)
         
-        # Hints indiquant simplement à DLT les colonnes de sous-dossiers
+        # Hints de partitionnement
         columns_hints = {
             "year": {"partition": True, "data_type": "bigint"},
             "month": {"partition": True, "data_type": "bigint"},
@@ -84,13 +84,18 @@ def run_export_pipeline():
     )
 
     # -------------------------------------------------------------------------
-    # 5. EXECUTION DU PIPELINE
+    # 5. EXECUTION DU PIPELINE ET CONFIGURATION DYNAMIQUE DU LAYOUT
     # -------------------------------------------------------------------------
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
         destination="filesystem",
         dataset_name=dataset_name,
     )
+
+    # Application dynamique du layout une fois les hints enregistrés sur la ressource
+    if partition_col:
+        layout_pattern = "{table_name}/Year={year}/Month={month}/Day={day}/{file_id}.{ext}"
+        pipeline.destination_client().config.layout = layout_pattern
 
     load_info = pipeline.run(resource)
 
