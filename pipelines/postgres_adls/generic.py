@@ -1,6 +1,7 @@
 import os
 import sys
 import dlt
+from dlt.destinations import filesystem
 from dlt.sources.sql_database import sql_table
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -18,6 +19,7 @@ try:
     backend = os.environ["DLT_BACKEND"].lower()
     chunk_size = int(os.environ["DLT_CHUNK_SIZE"])
     write_strategy = os.environ["DLT_WRITE_STRATEGY"].lower()
+    use_azurite = os.environ.get("USE_AZURITE", "false").lower() == "true"
 except KeyError as e:
     print(f"❌ ERREUR CRITIQUE : Variable {e} absente.")
     sys.exit(1)
@@ -66,10 +68,8 @@ def run_export_pipeline():
     if partition_col:
         print(f"📅 Partitionnement Delta Lake activé sur la colonne : {partition_col}")
         
-        # Injection de la transformation vectorielle Arrow
         resource.add_map(add_date_partitions)
         
-        # Hints indiquant à Delta-RS les colonnes de sous-dossiers
         columns_hints = {
             "Year": {"partition": True, "data_type": "bigint"},
             "Month": {"partition": True, "data_type": "bigint"},
@@ -78,16 +78,36 @@ def run_export_pipeline():
 
     resource.apply_hints(
         write_disposition=write_strategy,
-        table_format="delta",  # Active le moteur Delta Lake (Delta-RS)
+        table_format="delta",
         columns=columns_hints if partition_col else None,
     )
 
     # -------------------------------------------------------------------------
-    # 5. EXECUTION DU PIPELINE
+    # 5. RESOLUTION DE LA DESTINATION (MODE TALAN EXACT)
     # -------------------------------------------------------------------------
+    bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
+
+    if use_azurite:
+        destination_obj = filesystem(
+            bucket_url=bucket_url,
+            deltalake_storage_options={
+                "use_emulator": True,
+                "allow_http": True,
+                "azure_storage_allow_http": True,
+            },
+        )
+    else:
+        destination_obj = filesystem(
+            bucket_url=bucket_url,
+            deltalake_storage_options={
+                "timeout": "60s",
+                "max_retries": "3",
+            },
+        )
+
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
-        destination="filesystem",
+        destination=destination_obj,
         dataset_name=dataset_name,
     )
 
