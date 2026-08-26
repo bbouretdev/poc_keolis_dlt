@@ -19,7 +19,7 @@ try:
     backend = os.environ["DLT_BACKEND"].lower()
     chunk_size = int(os.environ["DLT_CHUNK_SIZE"])
     write_strategy = os.environ["DLT_WRITE_STRATEGY"].lower()
-    use_azurite = os.environ.get("USE_AZURITE", "false").lower() == "true"
+    use_azurite = os.environ.get("USE_AZURITE", "false").lower() in ("true", "1", "yes")
 except KeyError as e:
     print(f"❌ ERREUR CRITIQUE : Variable {e} absente.")
     sys.exit(1)
@@ -83,17 +83,18 @@ def run_export_pipeline():
     )
 
     # -------------------------------------------------------------------------
-    # 5. RESOLUTION DE LA DESTINATION (MODE TALAN EXACT)
+    # 5. RESOLUTION DE LA DESTINATION (VALEURS STR STRICTES)
     # -------------------------------------------------------------------------
     bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
 
     if use_azurite:
+        # Note : "true" est en chaîne de caractères, PAS en booléen True !
         destination_obj = filesystem(
             bucket_url=bucket_url,
             deltalake_storage_options={
-                "use_emulator": True,
-                "allow_http": True,
-                "azure_storage_allow_http": True,
+                "use_emulator": "true",
+                "allow_http": "true",
+                "azure_storage_allow_http": "true",
             },
         )
     else:
