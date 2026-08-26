@@ -64,22 +64,13 @@ def run_export_pipeline():
     # -------------------------------------------------------------------------
     # 4. PARTITIONNEMENT DELTA LAKE
     # -------------------------------------------------------------------------
-    columns_hints = {}
     if partition_col:
         print(f"📅 Partitionnement Delta Lake activé sur la colonne : {partition_col}")
-        
         resource.add_map(add_date_partitions)
-        
-        columns_hints = {
-            "Year": {"partition": True, "data_type": "bigint"},
-            "Month": {"partition": True, "data_type": "bigint"},
-            "Day": {"partition": True, "data_type": "bigint"},
-        }
 
     resource.apply_hints(
         write_disposition=write_strategy,
         table_format="delta",
-        columns=columns_hints if partition_col else None,
     )
 
     # -------------------------------------------------------------------------
@@ -93,6 +84,8 @@ def run_export_pipeline():
             bucket_url=bucket_url,
             deltalake_storage_options={
                 "azure_storage_allow_http": "true",
+                "azure_storage_use_http": "true",
+                "allow_http": "true",
                 "azure_storage_account_name": "devstoreaccount1",
                 "azure_storage_account_key": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
                 "azure_endpoint_url": azurite_endpoint,
