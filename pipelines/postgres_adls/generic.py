@@ -78,7 +78,7 @@ def run_export_pipeline():
         # Injection du transformer PyArrow
         resource = (resource | add_date_partitions(date_column=partition_col)).with_name(target_name)
         
-        # Déclaration des colonnes au schéma DLT
+        # Déclaration explicite des colonnes de partition dans le schéma DLT
         extra_columns = {
             **base_columns,
             "year": {"partition": True, "data_type": "bigint"},
@@ -96,11 +96,9 @@ def run_export_pipeline():
     # 5. EXECUTION DU PIPELINE
     # -------------------------------------------------------------------------
     if partition_col:
+        # Layout mappant directement les colonnes de partition du schéma Arrow
         layout_pattern = "{table_name}/Year={year}/Month={month}/Day={day}/{file_id}.{ext}"
-        dest = dlt.destinations.filesystem(
-            layout=layout_pattern,
-            extra_placeholders={"year": "year", "month": "month", "day": "day"}
-        )
+        dest = dlt.destinations.filesystem(layout=layout_pattern)
     else:
         dest = "filesystem"
 
