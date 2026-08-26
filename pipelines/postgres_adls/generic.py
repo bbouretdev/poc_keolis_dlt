@@ -68,7 +68,7 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 4. CALCUL DES PARTITIONS DE DONNÉES
+    # 4. CALCUL ET INJECTION DES COLONNES MÉTIERS
     # -------------------------------------------------------------------------
     extra_columns = {}
     if partition_col:
@@ -78,6 +78,7 @@ def run_export_pipeline():
         # Injection du transformer PyArrow
         resource = (resource | add_date_partitions(date_column=partition_col)).with_name(target_name)
         
+        # Déclaration des colonnes au schéma DLT
         extra_columns = {
             **base_columns,
             "year": {"partition": True, "data_type": "bigint"},
@@ -93,17 +94,19 @@ def run_export_pipeline():
 
     # -------------------------------------------------------------------------
     # 5. EXECUTION DU PIPELINE
-    # Instanciation dynamique du layout de destination
     # -------------------------------------------------------------------------
-    layout_pattern = (
-        "{table_name}/Year={year}/Month={month}/Day={day}/{file_id}.{ext}"
-        if partition_col
-        else "{table_name}/{file_id}.{ext}"
-    )
+    if partition_col:
+        layout_pattern = "{table_name}/Year={year}/Month={month}/Day={day}/{file_id}.{ext}"
+        dest = dlt.destinations.filesystem(
+            layout=layout_pattern,
+            extra_placeholders={"year": "year", "month": "month", "day": "day"}
+        )
+    else:
+        dest = "filesystem"
 
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
-        destination=dlt.destinations.filesystem(layout=layout_pattern),
+        destination=dest,
         dataset_name=dataset_name,
     )
 
