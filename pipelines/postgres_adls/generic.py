@@ -43,6 +43,7 @@ def add_date_partitions(table: pa.Table) -> pa.Table:
 
 def run_export_pipeline():
     print(f"🚀 Export DLT (Format : {storage_format.upper()}) - Strategy : {write_strategy}")
+    print(f"⚙️ Backend : {backend} | Chunk size : {chunk_size}")
     print(f"📦 Source : {source_schema}.{source_table} -> Cible : {dataset_name}/{target_name}")
 
     # -------------------------------------------------------------------------
