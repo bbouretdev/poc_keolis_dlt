@@ -8,7 +8,6 @@ import os
 from typing import Any
 
 import dlt
-from dlt.common.configuration.specs import AzureCredentialsWithoutDefaults
 from dlt.pipeline.exceptions import PipelineStepFailed
 from dlt.sources.helpers.requests import Client as DltHttpClient
 from dlt.sources.helpers.requests import RequestException as DltRequestException
@@ -194,33 +193,6 @@ else:
         return resources
 
 
-def _azurite_credentials() -> AzureCredentialsWithoutDefaults:
-    return AzureCredentialsWithoutDefaults(
-        azure_storage_account_name=os.getenv("AZURE_STORAGE_ACCOUNT_NAME", "devstoreaccount1"),
-        azure_storage_account_key=os.getenv(
-            "AZURE_STORAGE_ACCOUNT_KEY",
-            "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
-        ),
-        # Azurite is not real Azure DNS: adlfs must be pointed at the local
-        # emulator host or it will try to reach <account>.blob.core.windows.net.
-        azure_account_host=os.getenv("AZURITE_BLOB_HOST", "127.0.0.1:10000/devstoreaccount1"),
-    )
-
-
-def _azure_prod_credentials() -> AzureCredentialsWithoutDefaults:
-    account_name = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
-    account_key = os.getenv("AZURE_STORAGE_ACCOUNT_KEY")
-    if not account_name or not account_key:
-        raise ValueError(
-            "AZURE_STORAGE_ACCOUNT_NAME and AZURE_STORAGE_ACCOUNT_KEY must both be set "
-            "in the environment to write to ADLS (USE_AZURITE is false)."
-        )
-    return AzureCredentialsWithoutDefaults(
-        azure_storage_account_name=account_name,
-        azure_storage_account_key=account_key,
-    )
-
-
 def build_adls_destination(
     bucket_url: str,
     layout: str = "{table_name}",
@@ -242,19 +214,30 @@ def build_adls_destination(
         ensure_azurite_runtime_settings()
         return dlt.destinations.filesystem(
             bucket_url=resolved_bucket_url,
-            credentials=_azurite_credentials(),
             layout=layout,
             file_format="parquet",
-            deltalake_storage_options=deltalake_storage_options
-            or {"timeout": "60s", "max_retries": "3"},
+            deltalake_storage_options={
+                **(deltalake_storage_options or {"timeout": "60s", "max_retries": "3"}),
+                "connection_string": resolve_azurite_connection_string(),
+            },
+        )
+
+    account_name = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
+    account_key = os.getenv("AZURE_STORAGE_ACCOUNT_KEY")
+    if not account_name or not account_key:
+        raise ValueError(
+            "AZURE_STORAGE_ACCOUNT_NAME and AZURE_STORAGE_ACCOUNT_KEY must both be set "
+            "in the environment to write to ADLS when USE_AZURITE=false."
         )
 
     return dlt.destinations.filesystem(
         bucket_url=resolved_bucket_url,
-        credentials=_azure_prod_credentials(),
         layout=layout,
-        deltalake_storage_options=deltalake_storage_options
-        or {"timeout": "60s", "max_retries": "3"},
+        deltalake_storage_options={
+            **(deltalake_storage_options or {"timeout": "60s", "max_retries": "3"}),
+            "account_name": account_name,
+            "account_key": account_key,
+        },
     )
 
 
