@@ -8,6 +8,7 @@ import os
 from typing import Any
 
 import dlt
+from dlt.common.configuration.specs import AzureCredentialsWithoutDefaults
 from dlt.pipeline.exceptions import PipelineStepFailed
 from dlt.sources.helpers.requests import Client as DltHttpClient
 from dlt.sources.helpers.requests import RequestException as DltRequestException
@@ -15,7 +16,13 @@ from dlt.sources.helpers.requests import Session as DltSession
 from dlt.sources.rest_api import check_connection, rest_api_source
 from dlt.sources.filesystem import filesystem, read_parquet
 
-USE_AZURITE = os.getenv("USE_AZURITE", "true").lower() == "true"
+# SAFE DEFAULT: "false". This pipeline writes to real ADLS/production storage
+# by default; USE_AZURITE must be explicitly set to "true" to opt into the
+# local Azurite emulator. The previous default of "true" meant any pod that
+# forgot to set this variable silently ran in Azurite dev mode against a
+# real bucket_url, with credentials that were never actually wired to the
+# destination (see build_adls_destination below).
+USE_AZURITE = os.getenv("USE_AZURITE", "false").lower() == "true"
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +194,33 @@ else:
         return resources
 
 
+def _azurite_credentials() -> AzureCredentialsWithoutDefaults:
+    return AzureCredentialsWithoutDefaults(
+        azure_storage_account_name=os.getenv("AZURE_STORAGE_ACCOUNT_NAME", "devstoreaccount1"),
+        azure_storage_account_key=os.getenv(
+            "AZURE_STORAGE_ACCOUNT_KEY",
+            "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
+        ),
+        # Azurite is not real Azure DNS: adlfs must be pointed at the local
+        # emulator host or it will try to reach <account>.blob.core.windows.net.
+        azure_account_host=os.getenv("AZURITE_BLOB_HOST", "127.0.0.1:10000/devstoreaccount1"),
+    )
+
+
+def _azure_prod_credentials() -> AzureCredentialsWithoutDefaults:
+    account_name = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
+    account_key = os.getenv("AZURE_STORAGE_ACCOUNT_KEY")
+    if not account_name or not account_key:
+        raise ValueError(
+            "AZURE_STORAGE_ACCOUNT_NAME and AZURE_STORAGE_ACCOUNT_KEY must both be set "
+            "in the environment to write to ADLS (USE_AZURITE is false)."
+        )
+    return AzureCredentialsWithoutDefaults(
+        azure_storage_account_name=account_name,
+        azure_storage_account_key=account_key,
+    )
+
+
 def build_adls_destination(
     bucket_url: str,
     layout: str = "{table_name}",
@@ -201,19 +235,23 @@ def build_adls_destination(
     resolved_bucket_url = resolve_storage_bucket_url(bucket_url)
 
     if USE_AZURITE:
+        logger.warning(
+            "USE_AZURITE=true | writing to the local Azurite emulator, not real ADLS | bucket=%s",
+            resolved_bucket_url,
+        )
         ensure_azurite_runtime_settings()
         return dlt.destinations.filesystem(
             bucket_url=resolved_bucket_url,
+            credentials=_azurite_credentials(),
             layout=layout,
             file_format="parquet",
-            deltalake_storage_options={
-                **(deltalake_storage_options or {"timeout": "60s", "max_retries": "3"}),
-                "connection_string": resolve_azurite_connection_string(),
-            },
+            deltalake_storage_options=deltalake_storage_options
+            or {"timeout": "60s", "max_retries": "3"},
         )
 
     return dlt.destinations.filesystem(
         bucket_url=resolved_bucket_url,
+        credentials=_azure_prod_credentials(),
         layout=layout,
         deltalake_storage_options=deltalake_storage_options
         or {"timeout": "60s", "max_retries": "3"},
