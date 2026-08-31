@@ -278,18 +278,19 @@ def _run_pipeline_with_retry(
         try:
             return pipeline.run(source, **run_kwargs)
         except retryable_exceptions as exception:
+            error_text = str(exception)
+            first_error_line = error_text.splitlines()[0] if error_text else "unknown error"
             if attempt >= max_attempts:
                 logger.error(
-                    "PIPELINE RETRY EXHAUSTED | pipeline=%s | attempts=%s | error=%s",
+                    "PIPELINE RETRY EXHAUSTED | pipeline=%s | attempts=%s | error_type=%s | error=%s",
                     pipeline.pipeline_name,
                     attempt,
-                    exception,
+                    type(exception).__name__,
+                    first_error_line,
                 )
                 raise
             delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
             delay += random.uniform(0, delay * 0.1)
-            error_text = str(exception)
-            first_error_line = error_text.splitlines()[0] if error_text else "unknown error"
             logger.warning(
                 "PIPELINE RETRY | pipeline=%s | attempt=%s/%s | retrying_in=%.1fs | error_type=%s | error=%s",
                 pipeline.pipeline_name,
