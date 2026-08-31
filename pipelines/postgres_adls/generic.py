@@ -7,6 +7,7 @@ from dlt.sources.sql_database import sql_table
 import pyarrow as pa
 import pyarrow.compute as pc
 import sqlalchemy as sa
+from deltalake import write_deltalake
 
 # -----------------------------------------------------------------------------
 # 1. LECTURE ET CONTÔLE DES VARIABLES D'ENVIRONNEMENT
@@ -113,71 +114,92 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 5. PARTITIONNEMENT
-    # -------------------------------------------------------------------------
-    columns_hints = {}
-
-    if use_partition and partition_col:
-        print(f"📅 Partitionnement activé sur la colonne : {partition_col}")
-        resource.add_map(add_date_partitions)
-
-        columns_hints = {
-            "Year": {"partition": True, "data_type": "bigint"},
-            "Month": {"partition": True, "data_type": "bigint"},
-            "Day": {"partition": True, "data_type": "bigint"},
-        }
-    else:
-        print("ℹ️ Mode non-partitionné activé.")
-
-    table_format_value = storage_format if storage_format == "delta" else None
-
-    resource.apply_hints(
-        write_disposition=write_strategy,
-        table_format=table_format_value,
-        columns=columns_hints if (use_partition and partition_col) else None,
-    )
-
-    # -------------------------------------------------------------------------
-    # 6. INSTANCIATION DESTINATION ET EXECUTION
+    # 5. RÉSOLUTION DES OPTIONS DE STOCKAGE DELTA
     # -------------------------------------------------------------------------
     bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
+    target_full_url = f"{bucket_url}/{dataset_name}/{target_name}"
 
-    if storage_format == "delta":
-        if use_azurite:
-            azurite_endpoint = "http://azurite:10000/devstoreaccount1"
-            destination_obj = filesystem(
-                bucket_url=bucket_url,
-                deltalake_storage_options={
-                    "azure_storage_allow_http": "true",
-                    "azure_storage_use_http": "true",
-                    "allow_http": "true",
-                    "azure_storage_account_name": "devstoreaccount1",
-                    "azure_storage_account_key": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
-                    "azure_endpoint_url": azurite_endpoint,
-                    "azure_endpoint": azurite_endpoint,
-                },
-            )
-        else:
-            destination_obj = filesystem(
-                bucket_url=bucket_url,
-                deltalake_storage_options={
-                    "timeout": "60s",
-                    "max_retries": "3",
-                },
-            )
+    if use_azurite:
+        azurite_endpoint = "http://azurite:10000/devstoreaccount1"
+        deltalake_options = {
+            "azure_storage_allow_http": "true",
+            "azure_storage_use_http": "true",
+            "allow_http": "true",
+            "azure_storage_account_name": "devstoreaccount1",
+            "azure_storage_account_key": "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==",
+            "azure_endpoint_url": azurite_endpoint,
+            "azure_endpoint": azurite_endpoint,
+        }
     else:
-        destination_obj = filesystem(bucket_url=bucket_url)
+        deltalake_options = {
+            "timeout": "60s",
+            "max_retries": "3",
+        }
 
-    pipeline = dlt.pipeline(
-        pipeline_name=pipeline_id,
-        destination=destination_obj,
-        dataset_name=dataset_name,
-    )
+    # -------------------------------------------------------------------------
+    # 6. BRANCHE ÉCRITURE : NATIVE OVERWRITE DELTA VS PIPELINE DLT CLASSIQUE
+    # -------------------------------------------------------------------------
+    if write_strategy == "replace" and storage_format == "delta":
+        print("🔄 Mode 'replace' + Delta détecté : Utilisation de deltalake.write_deltalake(mode='overwrite')")
+        
+        # A. Extraire la table en mémoire sous forme de PyArrow Table
+        arrow_table = resource.to_arrow()
+        
+        # B. Appliquer le partitionnement le cas échéant
+        if use_partition and partition_col:
+            print(f"📅 Partitionnement appliqué sur la colonne : {partition_col}")
+            arrow_table = add_date_partitions(arrow_table)
+            partition_cols = ["Year", "Month", "Day"]
+        else:
+            partition_cols = None
 
-    load_info = pipeline.run(resource)
+        # C. Écriture atomique avec suppression logique des anciens fichiers (Commit Overwrite)
+        write_deltalake(
+            table_or_uri=target_full_url,
+            data=arrow_table,
+            mode="overwrite",
+            partition_by=partition_cols,
+            storage_options=deltalake_options,
+        )
+        print(f"\n✅ Export DELTA (Vrai Overwrite) terminé avec succès ({arrow_table.num_rows} lignes) !")
 
-    print(f"\n✅ Export {storage_format.upper()} terminé avec succès !")
-    print(load_info)
+    else:
+        # Mode Append classique ou formats non-Delta (Parquet/CSV)
+        columns_hints = {}
+
+        if use_partition and partition_col:
+            print(f"📅 Partitionnement activé sur la colonne : {partition_col}")
+            resource.add_map(add_date_partitions)
+
+            columns_hints = {
+                "Year": {"partition": True, "data_type": "bigint"},
+                "Month": {"partition": True, "data_type": "bigint"},
+                "Day": {"partition": True, "data_type": "bigint"},
+            }
+
+        table_format_value = storage_format if storage_format == "delta" else None
+
+        resource.apply_hints(
+            write_disposition=write_strategy,
+            table_format=table_format_value,
+            columns=columns_hints if (use_partition and partition_col) else None,
+        )
+
+        destination_obj = filesystem(
+            bucket_url=bucket_url,
+            deltalake_storage_options=deltalake_options if storage_format == "delta" else None,
+        )
+
+        pipeline = dlt.pipeline(
+            pipeline_name=pipeline_id,
+            destination=destination_obj,
+            dataset_name=dataset_name,
+        )
+
+        load_info = pipeline.run(resource)
+
+        print(f"\n✅ Export {storage_format.upper()} terminé avec succès !")
+        print(load_info)
 
 
 if __name__ == "__main__":
