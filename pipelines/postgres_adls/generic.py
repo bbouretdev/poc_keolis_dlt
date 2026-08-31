@@ -1,7 +1,6 @@
-from datetime import date, datetime, time
+import datetime
 import os
 import sys
-
 import dlt
 from dlt.destinations import filesystem
 from dlt.sources.sql_database import sql_table
@@ -10,7 +9,7 @@ import pyarrow.compute as pc
 import sqlalchemy as sa
 
 # -----------------------------------------------------------------------------
-# 1. LECTURE DES VARIABLES D'ENVIRONNEMENT
+# 1. LECTURE ET CONTÔLE DES VARIABLES D'ENVIRONNEMENT
 # -----------------------------------------------------------------------------
 try:
     pipeline_id = os.environ["DLT_PIPELINE_ID"]
@@ -26,16 +25,16 @@ try:
     storage_format = os.environ.get("DLT_STORAGE_FORMAT", "delta").lower()
     use_partition = os.environ.get("DLT_USE_PARTITION", "true").lower() in ("true", "1", "yes")
 
-    # Lecture des configurations de fenêtrage (depuis le bloc source)
+    # Mode Fenêtré
     enable_windowing = os.environ.get("DLT_ENABLE_WINDOWING", "false").lower() in ("true", "1", "yes")
-    incremental_cursor = os.environ.get("DLT_INCREMENTAL_CURSOR", "").strip().lower()
+    incremental_cursor = os.environ.get("DLT_INCREMENTAL_CURSOR", "").strip()
 except KeyError as e:
     print(f"❌ ERREUR CRITIQUE : Variable {e} absente.")
     sys.exit(1)
 
 
 # -----------------------------------------------------------------------------
-# 2. TRANSFORMER DLT SUR DATE MÉTIER
+# 2. TRANSFORMER DLT DE DÉCOUPAGE SUR DATE MÉTIER
 # -----------------------------------------------------------------------------
 def add_date_partitions(table: pa.Table) -> pa.Table:
     if not partition_col or partition_col not in table.column_names:
@@ -48,45 +47,31 @@ def add_date_partitions(table: pa.Table) -> pa.Table:
     )
 
 
+# -----------------------------------------------------------------------------
+# 3. BUILDER DE CALLBACK : BORNE SUPÉRIEURE (MINUIT CE MATIN)
+# -----------------------------------------------------------------------------
+def build_upper_bound_callback(cursor_col_name: str):
+    """Injecte la condition SQL : WHERE cursor_col < minuit_aujourd'hui."""
+    midnight_today = datetime.datetime.now(datetime.timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+
+    def query_adapter(query, table_schema):
+        cursor_column = table_schema.columns[cursor_col_name]
+        sql_col = sa.column(cursor_column["name"])
+        print(f"🔒 Borne supérieure SQL injectée : {cursor_col_name} < {midnight_today.isoformat()}")
+        return query.where(sql_col < midnight_today)
+
+    return query_adapter
+
+
 def run_export_pipeline():
     print(f"🚀 Export DLT (Format : {storage_format.upper()}) - Strategy : {write_strategy}")
     print(f"⚙️ Backend : {backend} | Chunk size : {chunk_size}")
     print(f"📦 Source : {source_schema}.{source_table} -> Cible : {dataset_name}/{target_name}")
 
     # -------------------------------------------------------------------------
-    # 3. CONFIGURATION FENÊTRAGE & WATERMARK
-    # -------------------------------------------------------------------------
-    incremental_obj = None
-    query_adapter = None
-
-    if enable_windowing:
-        if not incremental_cursor:
-            print("❌ ERREUR CRITIQUE : Fenêtrage activé sans 'incremental_cursor'.")
-            sys.exit(1)
-
-        # Borne supérieure stricte : minuit au début du jour courant
-        upper_bound = datetime.combine(date.today(), time.min)
-
-        print(f"🪟 Mode Fenêtré Activé | Curseur: {incremental_cursor} | Borne Supérieure: < {upper_bound}")
-
-        # Incrémental dlt : range_start="open" force un strict `>` sur le watermark[cite: 1]
-        incremental_obj = dlt.sources.incremental(
-            cursor_path=incremental_cursor,
-            initial_value=datetime(1901, 1, 1),
-            range_start="open",
-            on_cursor_value_missing="exclude",
-        )
-
-        # Ingestion de la borne supérieure dans le SQL généré[cite: 1]
-        def build_upper_bound_adapter(cursor_col: str, upper: datetime):
-            def adapter(query: sa.sql.Select, table: sa.Table, *args, **kwargs) -> sa.sql.Select:
-                return query.where(table.c[cursor_col] < upper)
-            return adapter
-
-        query_adapter = build_upper_bound_adapter(incremental_cursor, upper_bound)
-
-    # -------------------------------------------------------------------------
-    # 4. CRÉATION DE LA RESSOURCE SOURCE
+    # 4. CONFIGURATION DE LA RESSOURCE DLT SOURCE
     # -------------------------------------------------------------------------
     dlt_kwargs = {
         "table": source_table,
@@ -95,13 +80,24 @@ def run_export_pipeline():
         "chunk_size": chunk_size,
     }
 
-    if incremental_obj:
-        dlt_kwargs["incremental"] = incremental_obj
-    if query_adapter:
-        dlt_kwargs["query_adapter_callback"] = query_adapter
-
     if backend == "pyarrow":
         dlt_kwargs["reflection_level"] = "full_with_precision"
+
+    # Application du fenêtrage (borne inf + borne sup)
+    if enable_windowing and incremental_cursor:
+        print(f"🪟 Mode fenêtré activé sur le curseur : '{incremental_cursor}'")
+        
+        # Borne inférieure dynamique gestion dlt (WHERE cursor > watermark)
+        dlt_kwargs["incremental"] = dlt.sources.incremental(
+            incremental_cursor,
+            initial_value=None,
+            range_start="open",  # Condition stricte >
+        )
+
+        # Borne supérieure fixe SQL (WHERE cursor < minuit_aujourd'hui)
+        dlt_kwargs["query_adapter_callback"] = build_upper_bound_callback(incremental_cursor)
+    else:
+        print("ℹ️ Mode Full / Non-fenêtré activé.")
 
     resource = sql_table(**dlt_kwargs)
 
@@ -109,7 +105,7 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 5. PARTITIONNEMENT
+    # 5. CONFIGURATION DU PARTITIONNEMENT
     # -------------------------------------------------------------------------
     columns_hints = {}
 
@@ -134,7 +130,7 @@ def run_export_pipeline():
     )
 
     # -------------------------------------------------------------------------
-    # 6. RÉSOLUTION DE LA DESTINATION (PERSISTANCE DU WATERMARK)
+    # 6. INSTANCIATION DESTINATION ET EXECUTION DU PIPELINE
     # -------------------------------------------------------------------------
     bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
 
@@ -164,7 +160,6 @@ def run_export_pipeline():
     else:
         destination_obj = filesystem(bucket_url=bucket_url)
 
-    # Le state du pipeline (comprenant le watermark) est sauvegardé dans destination_obj sous pipeline_id
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_id,
         destination=destination_obj,
