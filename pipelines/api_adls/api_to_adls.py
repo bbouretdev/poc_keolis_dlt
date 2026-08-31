@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import io
 import logging
 import random
 import time
-from datetime import datetime, timezone
+import os
 from typing import Any
-from urllib.parse import quote_plus
 
 import dlt
 from dlt.pipeline.exceptions import PipelineStepFailed
@@ -13,6 +13,9 @@ from dlt.sources.helpers.requests import Client as DltHttpClient
 from dlt.sources.helpers.requests import RequestException as DltRequestException
 from dlt.sources.helpers.requests import Session as DltSession
 from dlt.sources.rest_api import check_connection, rest_api_source
+from dlt.sources.filesystem import filesystem, read_parquet
+
+USE_AZURITE = os.getenv("USE_AZURITE", "true").lower() == "true"
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +32,188 @@ _RETRYABLE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     PipelineStepFailed,
 )
 
+CONTAINER_NAME = os.getenv("DLT_AZURE_CONTAINER", "target-data")
+FILE_MAPPING_RAW = os.getenv("DLT_FILE_GLOB", "*.parquet")
+PIPELINE_ID = os.getenv("DLT_PIPELINE_ID", "api_to_adls_pipeline")
+TARGET_SCHEMA = os.getenv("DLT_TARGET_SCHEMA", "dlt")
+WRITE_STRATEGY = os.getenv("DLT_WRITE_STRATEGY", "replace").lower()
+CHUNK_SIZE = int(os.getenv("DLT_CHUNK_SIZE", "10000"))
+
+DEFAULT_AZURITE_CONNECTION_STRING = (
+    "DefaultEndpointsProtocol=http;"
+    "AccountName=devstoreaccount1;"
+    "AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;"
+    "BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
+)
+
+
+def resolve_storage_bucket_url(bucket_url: str | None = None) -> str:
+    """Normalise l’URL de destination pour Azurite ou ADLS Gen2."""
+    if bucket_url:
+        return bucket_url
+    return f"az://{CONTAINER_NAME}"
+
+
+def resolve_azurite_connection_string() -> str:
+    """Retourne la chaîne de connexion Azurite locale utilisée par le SDK et DLT."""
+    return os.getenv("AZURE_STORAGE_CONNECTION_STRING", DEFAULT_AZURITE_CONNECTION_STRING)
+
+
+def ensure_azurite_runtime_settings() -> None:
+    """Injecte les variables nécessaires au runtime local Azurite."""
+    if USE_AZURITE:
+        os.environ.setdefault("AZURE_STORAGE_CONNECTION_STRING", resolve_azurite_connection_string())
+        os.environ.setdefault("AZURE_STORAGE_ACCOUNT_NAME", "devstoreaccount1")
+        os.environ.setdefault("AZURE_STORAGE_ACCOUNT_KEY", "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==")
+
+def parse_file_mapping(raw_input: str) -> dict:
+    """
+    Parse la chaîne transmise et retourne un dict {glob_pattern: target_table_name_or_None}.
+    Exexmples acceptés :
+      - "items.parquet:items, orders.parquet:client_orders"
+      - "*.parquet"
+    """
+    mapping = {}
+    tokens = [t.strip() for t in raw_input.split(",") if t.strip()]
+    
+    for token in tokens:
+        if ":" in token:
+            file_pattern, table_alias = token.split(":", 1)
+            mapping[file_pattern.strip()] = table_alias.strip().lower()
+        else:
+            mapping[token.strip()] = None
+            
+    return mapping
+
+MAPPING = parse_file_mapping(FILE_MAPPING_RAW)
+
+def derive_table_name(path: str, alias: str = None) -> str:
+    """Si un alias est fourni, l'utilise, sinon déduit le nom depuis le fichier."""
+    if alias:
+        return alias
+    filename = os.path.basename(path)
+    base_name = os.path.splitext(filename)[0]
+    return base_name.replace("-", "_").replace(" ", "_").lower()
+
+if USE_AZURITE:
+    # ------------------------------------------------------------------
+    # 1. MODE DEV LOCAL (AZURITE) AVEC STREAMING / CHUNKING PAR BATCHS
+    # ------------------------------------------------------------------
+    from azure.storage.blob import BlobServiceClient
+    import pyarrow.parquet as pq
+
+    @dlt.source
+    def source_parquet_data():
+        conn_str = os.getenv(
+            "AZURE_STORAGE_CONNECTION_STRING",
+            (
+                "DefaultEndpointsProtocol=http;"
+                "AccountName=devstoreaccount1;"
+                "AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;"
+                "BlobEndpoint=http://127.0.0.1:10000/devstoreaccount1;"
+            ),
+        )
+
+        blob_service_client = BlobServiceClient.from_connection_string(
+            conn_str, api_version="2020-08-04"
+        )
+        container_client = blob_service_client.get_container_client(CONTAINER_NAME)
+
+        resources = []
+        try:
+            all_blobs = list(container_client.list_blobs())
+        except Exception as e:
+            print(f"⚠️ Erreur d'accès au conteneur Azurite '{CONTAINER_NAME}': {e}")
+            return []
+
+        for file_pattern, custom_table in MAPPING.items():
+            for blob in all_blobs:
+                if file_pattern == "*.parquet" or blob.name == file_pattern or blob.name.endswith(file_pattern):
+                    blob_name = blob.name
+                    target_table_name = derive_table_name(blob_name, custom_table)
+
+                    # Générateur découpant la table Arrow par lots (chunk_size)
+                    def make_generator(b_name=blob_name):
+                        def item_generator():
+                            blob_client = container_client.get_blob_client(b_name)
+                            stream = blob_client.download_blob()
+                            table = pq.read_table(io.BytesIO(stream.readall()))
+                            
+                            # REPRODUIT LE COMPORTEMENT DLT NATIVE (CHUNK_SIZE) :
+                            # Au lieu de yield toute la table en 1 bloc, on yield par paquets de N lignes
+                            for batch in table.to_batches(max_chunksize=CHUNK_SIZE):
+                                yield batch.to_pylist()
+
+                        return item_generator
+
+                    res = dlt.resource(
+                        make_generator(),
+                        name=target_table_name,
+                        selected=True,
+                    )
+                    resources.append(res)
+
+        if not resources:
+            print(f"⚠️ Aucun fichier correspondant trouvé dans Azurite '{CONTAINER_NAME}' pour {MAPPING}")
+
+        return resources
+
+else:
+    # ------------------------------------------------------------------
+    # 2. MODE PROD NATIVE (ADLS GEN2) - STREAMING STREAMÉ PAR DEFAULT
+    # ------------------------------------------------------------------
+    @dlt.source
+    def source_parquet_data():
+        resources = []
+        
+        for file_pattern, custom_table in MAPPING.items():
+            files = filesystem(
+                bucket_url=f"az://{CONTAINER_NAME}",
+                file_glob=file_pattern,
+            )
+            
+            for file_item in files:
+                file_path = file_item["file_name"]
+                target_table_name = derive_table_name(file_path, custom_table)
+                
+                single_file = filesystem(
+                    bucket_url=f"az://{CONTAINER_NAME}",
+                    file_glob=file_path,
+                )
+                
+                res = (single_file | read_parquet()).with_name(target_table_name)
+                resources.append(res)
+
+        return resources
+
 
 def build_adls_destination(
     bucket_url: str,
     layout: str = "{table_name}",
     deltalake_storage_options: dict[str, str] | None = None,
 ):
+    """Crée la destination DLT compatible ADLS et Azurite local.
+
+    En local, on active la chaîne de connexion Azurite avant la création du
+    pipeline pour que DLT écrive bien vers le conteneur local sans passer par
+    le endpoint ADLS.
+    """
+    resolved_bucket_url = resolve_storage_bucket_url(bucket_url)
+
+    if USE_AZURITE:
+        ensure_azurite_runtime_settings()
+        return dlt.destinations.filesystem(
+            bucket_url=resolved_bucket_url,
+            layout=layout,
+            file_format="parquet",
+            deltalake_storage_options={
+                **(deltalake_storage_options or {"timeout": "60s", "max_retries": "3"}),
+                "connection_string": resolve_azurite_connection_string(),
+            },
+        )
 
     return dlt.destinations.filesystem(
-        bucket_url=bucket_url,
+        bucket_url=resolved_bucket_url,
         layout=layout,
         deltalake_storage_options=deltalake_storage_options
         or {"timeout": "60s", "max_retries": "3"},
@@ -50,17 +226,6 @@ def _build_retrying_session(
     max_retry_delay: float = 60.0,
     status_forcelist: tuple[int, ...] = (429, 500, 502, 503, 504),
 ) -> DltSession:
-    """Build an HTTP session using DLT's own retrying HTTP client.
-
-    Wraps ``dlt.sources.helpers.requests.Client``, DLT's native ``Session``
-    factory, which already retries on 429/5xx responses and on connection or
-    timeout errors, applying exponential backoff (``backoff_factor *
-    2**(attempt-1)``, capped at ``max_retry_delay``) and honouring the
-    ``Retry-After`` header when present. No direct use of ``requests`` or
-    ``urllib3`` here; this session is injected into the REST API client via
-    ``client.session`` so a single flaky response does not fail the whole
-    extraction.
-    """
     return DltHttpClient(
         request_max_attempts=total_retries,
         request_backoff_factor=backoff_factor,
@@ -170,9 +335,10 @@ def load_rest_api_to_adls(
     if not resources:
         raise ValueError("resources must contain at least one resource")
 
+    storage_bucket_url = resolve_storage_bucket_url(bucket_url)
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_name,
-        destination=build_adls_destination(bucket_url=bucket_url, layout=layout),
+        destination=build_adls_destination(bucket_url=storage_bucket_url, layout=layout),
         dataset_name=dataset_name,
     )
     source = rest_api_to_adls_source(
