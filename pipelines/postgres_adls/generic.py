@@ -34,7 +34,7 @@ except KeyError as e:
 
 
 # -----------------------------------------------------------------------------
-# 2. TRANSFORMER DLT DE DÉCOUPAGE SUR DATE MÉTIER
+# 2. TRANSFORMER DLT SUR DATE MÉTIER
 # -----------------------------------------------------------------------------
 def add_date_partitions(table: pa.Table) -> pa.Table:
     if not partition_col or partition_col not in table.column_names:
@@ -51,15 +51,23 @@ def add_date_partitions(table: pa.Table) -> pa.Table:
 # 3. BUILDER DE CALLBACK : BORNE SUPÉRIEURE (MINUIT CE MATIN)
 # -----------------------------------------------------------------------------
 def build_upper_bound_callback(cursor_col_name: str):
-    """Injecte la condition SQL : WHERE cursor_col < minuit_aujourd'hui."""
+    """
+    Injecte la condition SQL : WHERE cursor_col < minuit_aujourd'hui.
+    Supporte la signature dlt multi-arguments (*args, **kwargs).
+    """
     midnight_today = datetime.datetime.now(datetime.timezone.utc).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
 
-    def query_adapter(query, table_schema):
-        cursor_column = table_schema.columns[cursor_col_name]
-        sql_col = sa.column(cursor_column["name"])
-        print(f"🔒 Borne supérieure SQL injectée : {cursor_col_name} < {midnight_today.isoformat()}")
+    def query_adapter(query, table_schema, *args, **kwargs):
+        if hasattr(table_schema, "columns") and cursor_col_name in table_schema.columns:
+            col_obj = table_schema.columns[cursor_col_name]
+            col_name = col_obj["name"] if isinstance(col_obj, dict) else getattr(col_obj, "name", cursor_col_name)
+        else:
+            col_name = cursor_col_name
+
+        sql_col = sa.column(col_name)
+        print(f"🔒 Borne supérieure SQL injectée : {col_name} < {midnight_today.isoformat()}")
         return query.where(sql_col < midnight_today)
 
     return query_adapter
@@ -83,18 +91,18 @@ def run_export_pipeline():
     if backend == "pyarrow":
         dlt_kwargs["reflection_level"] = "full_with_precision"
 
-    # Application du fenêtrage (borne inf + borne sup)
+    # Mode Fenêtré
     if enable_windowing and incremental_cursor:
         print(f"🪟 Mode fenêtré activé sur le curseur : '{incremental_cursor}'")
         
-        # Borne inférieure dynamique gestion dlt (WHERE cursor > watermark)
+        # Borne inférieure dynamique (WHERE cursor > watermark)
         dlt_kwargs["incremental"] = dlt.sources.incremental(
             incremental_cursor,
             initial_value=None,
-            range_start="open",  # Condition stricte >
+            range_start="open",
         )
 
-        # Borne supérieure fixe SQL (WHERE cursor < minuit_aujourd'hui)
+        # Borne supérieure fixe (WHERE cursor < minuit_aujourd'hui)
         dlt_kwargs["query_adapter_callback"] = build_upper_bound_callback(incremental_cursor)
     else:
         print("ℹ️ Mode Full / Non-fenêtré activé.")
@@ -105,7 +113,7 @@ def run_export_pipeline():
         resource = resource.with_name(target_name)
 
     # -------------------------------------------------------------------------
-    # 5. CONFIGURATION DU PARTITIONNEMENT
+    # 5. PARTITIONNEMENT
     # -------------------------------------------------------------------------
     columns_hints = {}
 
@@ -130,7 +138,7 @@ def run_export_pipeline():
     )
 
     # -------------------------------------------------------------------------
-    # 6. INSTANCIATION DESTINATION ET EXECUTION DU PIPELINE
+    # 6. INSTANCIATION DESTINATION ET EXECUTION
     # -------------------------------------------------------------------------
     bucket_url = os.environ["DESTINATION__FILESYSTEM__BUCKET_URL"]
 
