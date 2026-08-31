@@ -16,6 +16,8 @@ from dlt.sources.rest_api import check_connection, rest_api_source
 
 logger = logging.getLogger("api_to_adls_bis")
 
+logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
+
 USE_AZURITE = os.getenv("USE_AZURITE", "false").strip().lower() == "true"
 
 CONTAINER_NAME = os.getenv("DLT_AZURE_CONTAINER", "target-data")
@@ -386,3 +388,73 @@ def run_rest_api_to_adls_pipeline(
         max_retry_attempts=max_retry_attempts,
         retry_base_delay=retry_base_delay,
     )
+
+
+def _load_resources_from_env() -> list[dict | str]:
+    raw = os.getenv("API_RESOURCES")
+    if not raw:
+        return ["pokemon"]
+
+    try:
+        parsed = __import__("json").loads(raw)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, str):
+            return [parsed]
+    except Exception:
+        pass
+
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
+def _load_default_params_from_env() -> dict[str, Any]:
+    raw = os.getenv("API_DEFAULT_PARAMS")
+    if not raw:
+        return {}
+    try:
+        parsed = __import__("json").loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def main() -> None:
+    bucket_url = os.getenv("API_BUCKET_URL", "az://target-data")
+    dataset_name = os.getenv("API_DATASET_NAME", "poke_api")
+    pipeline_name = os.getenv("API_PIPELINE_NAME", "poke_api")
+    base_url = os.getenv("API_BASE_URL", "https://pokeapi.co/api/v2")
+    load_mode = os.getenv("API_LOAD_MODE", "full")
+    primary_key = os.getenv("API_PRIMARY_KEY")
+    layout = os.getenv("API_LAYOUT", "{table_name}")
+    max_retry_attempts = int(os.getenv("API_MAX_RETRY_ATTEMPTS", "3"))
+    retry_base_delay = float(os.getenv("API_RETRY_BASE_DELAY", "5.0"))
+
+    resources = _load_resources_from_env()
+    default_params = _load_default_params_from_env()
+
+    logger.info(
+        "STARTUP | destination=%s | base_url=%s | dataset=%s | pipeline=%s | resources=%s",
+        "AZURITE" if USE_AZURITE else "ADLS",
+        base_url,
+        dataset_name,
+        pipeline_name,
+        resources,
+    )
+
+    run_rest_api_to_adls_pipeline(
+        bucket_url=bucket_url,
+        dataset_name=dataset_name,
+        pipeline_name=pipeline_name,
+        base_url=base_url,
+        resources=resources,
+        load_mode=load_mode,
+        default_params=default_params,
+        primary_key=primary_key,
+        layout=layout,
+        max_retry_attempts=max_retry_attempts,
+        retry_base_delay=retry_base_delay,
+    )
+
+
+if __name__ == "__main__":
+    main()
