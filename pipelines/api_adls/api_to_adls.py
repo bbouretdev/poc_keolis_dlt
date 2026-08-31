@@ -47,22 +47,22 @@ DEFAULT_AZURITE_CONNECTION_STRING = (
 )
 
 
-def storage_bucket_url(bucket_url: str | None = None) -> str:
+def resolve_storage_bucket_url(bucket_url: str | None = None) -> str:
     """Normalise l’URL de destination pour Azurite ou ADLS Gen2."""
     if bucket_url:
         return bucket_url
     return f"az://{CONTAINER_NAME}"
 
 
-def azurite_connection_string() -> str:
+def resolve_azurite_connection_string() -> str:
     """Retourne la chaîne de connexion Azurite locale utilisée par le SDK et DLT."""
     return os.getenv("AZURE_STORAGE_CONNECTION_STRING", DEFAULT_AZURITE_CONNECTION_STRING)
 
 
-def azurite_runtime_settings() -> None:
+def ensure_azurite_runtime_settings() -> None:
     """Injecte les variables nécessaires au runtime local Azurite."""
     if USE_AZURITE:
-        os.environ.setdefault("AZURE_STORAGE_CONNECTION_STRING", azurite_connection_string())
+        os.environ.setdefault("AZURE_STORAGE_CONNECTION_STRING", resolve_azurite_connection_string())
         os.environ.setdefault("AZURE_STORAGE_ACCOUNT_NAME", "devstoreaccount1")
         os.environ.setdefault("AZURE_STORAGE_ACCOUNT_KEY", "Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==")
 
@@ -198,17 +198,17 @@ def build_adls_destination(
     pipeline pour que DLT écrive bien vers le conteneur local sans passer par
     le endpoint ADLS.
     """
-    resolved_bucket_url = storage_bucket_url(bucket_url)
+    resolved_bucket_url = resolve_storage_bucket_url(bucket_url)
 
     if USE_AZURITE:
-        azurite_runtime_settings()
+        ensure_azurite_runtime_settings()
         return dlt.destinations.filesystem(
             bucket_url=resolved_bucket_url,
             layout=layout,
             file_format="parquet",
             deltalake_storage_options={
                 **(deltalake_storage_options or {"timeout": "60s", "max_retries": "3"}),
-                "connection_string": azurite_connection_string(),
+                "connection_string": resolve_azurite_connection_string(),
             },
         )
 
@@ -335,10 +335,10 @@ def load_rest_api_to_adls(
     if not resources:
         raise ValueError("resources must contain at least one resource")
 
-    storage_bucket_url = storage_bucket_url(bucket_url)
+    resolved_bucket_url = resolve_storage_bucket_url(bucket_url)
     pipeline = dlt.pipeline(
         pipeline_name=pipeline_name,
-        destination=build_adls_destination(bucket_url=storage_bucket_url, layout=layout),
+        destination=build_adls_destination(bucket_url=resolved_bucket_url, layout=layout),
         dataset_name=dataset_name,
     )
     source = rest_api_to_adls_source(
