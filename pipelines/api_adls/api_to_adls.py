@@ -128,6 +128,59 @@ def _build_adls_destination(
     )
 
 
+def _apply_resource_hints(
+    source,
+    resources: list[dict | str],
+) -> None:
+
+    for resource_config in resources:
+        if isinstance(resource_config, str):
+            resource_name = resource_config
+            config = {}
+        else:
+            config = resource_config
+            resource_name = config.get("name")
+
+        if not resource_name:
+            raise ValueError(
+                "Each resource must define a 'name'"
+            )
+
+        resource = source.resources.get(resource_name)
+
+        if resource is None:
+            raise ValueError(
+                f"Resource '{resource_name}' was not found in dlt source"
+            )
+
+        hints: dict[str, object] = {}
+
+        primary_key = config.get("primary_key")
+        if primary_key:
+            hints["primary_key"] = primary_key
+
+        write_disposition = config.get("write_disposition")
+        if write_disposition:
+            hints["write_disposition"] = write_disposition
+
+        table_format = config.get("table_format")
+        if table_format:
+            hints["table_format"] = table_format
+
+        file_format = config.get("file_format")
+        if file_format:
+            hints["file_format"] = file_format
+
+        if hints:
+            resource.apply_hints(**hints)
+
+        logger.debug(
+            "Resource configured | resource=%s | hints=%s",
+            resource_name,
+            hints,
+        )
+
+
 def run_rest_api_to_adls_pipeline(
     *,
     container_name: str,
@@ -144,13 +197,6 @@ def run_rest_api_to_adls_pipeline(
     retry_max_delay: float = DEFAULT_HTTP_MAX_RETRY_DELAY,
     max_table_nesting: int = DEFAULT_MAX_TABLE_NESTING,
 ):
-    normalized_mode = load_mode.lower()
-
-    if normalized_mode not in {"full", "delta"}:
-        raise ValueError(
-            "load_mode must be either 'full' or 'delta'"
-        )
-
     if not resources:
         raise ValueError(
             "resources must contain at least one resource"
@@ -164,7 +210,6 @@ def run_rest_api_to_adls_pipeline(
         dataset_name,
         base_url,
         container_name,
-        normalized_mode,
         len(resources),
     )
 
@@ -182,29 +227,10 @@ def run_rest_api_to_adls_pipeline(
         max_table_nesting=max_table_nesting,
     )
 
-    # Resource hints
-    hints: dict[str, object] = {}
-
-    if primary_key:
-        hints["primary_key"] = primary_key
-
-    if normalized_mode == "delta":
-        hints.update(
-            {
-                "table_format": "delta",
-                "write_disposition": "append",
-            }
-        )
-    else:
-        hints.update(
-            {
-                "file_format": "parquet",
-                "write_disposition": "replace",
-            }
-        )
-
-    for resource in source.resources.values():
-        resource.apply_hints(**hints)
+    _apply_resource_hints(
+        source=source,
+        resources=resources,
+    )
 
     destination = _build_adls_destination(
         container_name=container_name,
@@ -227,7 +253,6 @@ def run_rest_api_to_adls_pipeline(
             pipeline_name,
             dataset_name,
             base_url,
-            normalized_mode,
         )
         raise
 
@@ -236,7 +261,6 @@ def run_rest_api_to_adls_pipeline(
         "pipeline=%s | dataset=%s | mode=%s",
         pipeline_name,
         dataset_name,
-        normalized_mode,
     )
 
     logger.debug(
